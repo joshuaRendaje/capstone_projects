@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Sea Water Monitoring – Activity Log + AI Prediction + Firebase Save</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .tick { transition: color .2s ease, transform .2s ease; }
+    .tick.up { color: #10b981; transform: translateY(-2px); }
+    .tick.down { color: #ef4444; transform: translateY(2px); }
+    .shimmer {
+      background: linear-gradient(90deg, rgba(255,255,255,0) 0%, rgba(255,255,255,.35) 50%, rgba(255,255,255,0) 100%);
+      background-size: 200% 100%;
+      animation: shimmer 2s infinite;
+    }
+    @keyframes shimmer { 0%{background-position:200% 0} 100%{background-position:-200% 0} }
+    canvas { image-rendering: -webkit-optimize-contrast; }
+    .backdrop { background: rgba(2,6,23,.6); }
+    .tab { cursor: pointer; }
+    .tab-active { background: rgba(16,185,129,.15); border-color: rgba(16,185,129,.4); }
+  </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-sky-900 via-slate-900 to-slate-950 text-white">
+  <!-- Connection banner -->
+  <div id="connBanner" class="hidden sticky top-0 z-50">
+    <div class="backdrop">
+      <div class="max-w-7xl mx-auto px-4 py-3">
+        <div class="flex items-center justify-between rounded-xl border border-amber-400/30 bg-amber-900/30 px-4 py-3">
+          <div class="flex items-center gap-3">
+            <span class="w-2.5 h-2.5 rounded-full bg-amber-400 animate-pulse"></span>
+            <p id="connText" class="text-sm">Not connected. Paste your Firebase config to auto-connect.</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="pasteBtn" class="bg-sky-500 hover:bg-sky-600 active:scale-[.99] text-white text-sm font-semibold px-3 py-2 rounded-lg transition">
+              Paste Firebase config
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="max-w-7xl mx-auto px-4 py-8">
+    <!-- Header: site title and connection mode badge (Demo/Firebase) -->
+    <header class="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      <div>
+        <h1 class="text-2xl md:text-3xl font-extrabold tracking-tight">Sea Water Monitoring</h1>
+        <p class="text-slate-300">pH, Salinity, Temperature, TDS, Dissolved Oxygen</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span id="modeBadge" class="relative inline-flex items-center gap-2 rounded-full bg-sky-700/30 border border-sky-400/30 px-3 py-1">
+          <span id="modeDot" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse"></span>
+          <span id="modeText" class="text-sm">Demo mode</span>
+          <span class="absolute inset-0 rounded-full shimmer opacity-10 pointer-events-none"></span>
+        </span>
+      </div>
+    </header>
+
+    <!-- Top: Main chart area + Site health summary + AI card -->
+    <section class="mt-6 grid lg:grid-cols-3 gap-6">
+      <!-- Left column: Temperature chart + snapshot download button -->
+      <div class="lg:col-span-2 rounded-2xl bg-white/5 border border-white/10 p-5">
+        <div class="flex items-center justify-between mb-3">
+          <div>
+            <h2 class="text-lg font-bold">Temperature</h2>
+            <p class="text-slate-400 text-sm">Live temperature (°C)</p>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="downloadCSV" class="px-3 py-1.5 rounded bg-emerald-600/70 hover:bg-emerald-600 text-white">Download CSV</button>
+          </div>
+        </div>
+
+        <div class="rounded-xl bg-slate-900/50 border border-white/10 p-4">
+          <div class="flex items-end justify-between">
+            <div></div>
+            <div class="text-right">
+              <div class="text-3xl font-extrabold">
+                <span id="chartValue" class="tick">0.0</span>
+                <span class="text-slate-400 text-lg">°C</span>
+              </div>
+              <div id="chartTrend" class="text-xs text-slate-400">—</div>
+            </div>
+          </div>
+          <div class="mt-4">
+            <canvas id="mainChart" height="160" class="w-full"></canvas>
+          </div>
+          <div class="mt-3 flex items-center justify-between text-xs text-slate-400">
+            <div>Points: <span id="pointCount">0</span></div>
+            <div>Last update: <span id="lastUpdate">—</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right column: Site health indicators + AI predictions panel -->
+      <div class="rounded-2xl bg-white/5 border border-white/10 p-5 space-y-4">
+        <div>
+          <div class="flex items-center justify-between">
+            <h3 class="font-bold text-lg">Site Health</h3>
+            <span id="siteHealth" class="text-xs rounded-full px-2 py-1 bg-emerald-600/30 border border-emerald-500/40">Good</span>
+          </div>
+          <div class="mt-3">
+            <div class="w-full bg-slate-800/60 rounded-md h-3 overflow-hidden">
+              <div id="healthBar" class="h-full bg-emerald-500 w-2/3"></div>
+            </div>
+            <p id="healthNote" class="mt-2 text-xs text-slate-400">All signals within normal ranges.</p>
+          </div>
+          <div class="mt-4 text-xs text-slate-400 space-y-1">
+            <div>Status: <span id="fbStatus">Waiting for Firebase...</span></div>
+          </div>
+        </div>
+
+        <div class="rounded-xl bg-slate-900/50 border border-white/10 p-4">
+          <div class="flex items-center justify-between">
+            <h4 class="font-bold">AI Predictions</h4>
+            <button id="runAI" class="px-3 py-1.5 rounded bg-indigo-600/80 hover:bg-indigo-600 text-white">Run AI check</button>
+          </div>
+          <p class="text-xs text-slate-400 mt-2">Uses your live readings to estimate water health in real time.</p>
+          <div id="aiResult" class="mt-3 p-3 rounded-lg bg-slate-800/60 border border-white/10 text-sm">
+            Ready. Click “Run AI check”.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sensor cards grid: pH, Salinity, TDS, Temp, DO -->
+    <section class="mt-6 grid sm:grid-cols-2 lg:grid-cols-3 gap-6">
+      <!-- Card: pH reading -->
+      <div class="rounded-2xl bg-white/5 border border-white/10 p-5">
+        <div class="flex items-center justify-between">
+          <h4 class="font-bold">pH</h4>
+          <span id="statusPH" class="text-xs rounded-full px-2 py-1 bg-slate-700/60 border border-white/10">OK</span>
+        </div>
+        <div class="mt-3 flex items-end justify-between">
+          <div class="text-3xl font-extrabold">
+            <span id="valPH" class="tick">7.00</span>
+          </div>
+          <div class="h-12 w-28 bg-slate-800/60 rounded-md p-1">
+            <div id="barPH" class="h-full bg-emerald-500 rounded"></div>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-slate-400">Acidity/Alkalinity</p>
+      </div>
+
+      <!-- Card: Salinity reading -->
+      <div class="rounded-2xl bg-white/5 border border-white/10 p-5">
+        <div class="flex items-center justify-between">
+          <h4 class="font-bold">Salinity</h4>
+          <span id="statusSalinity" class="text-xs rounded-full px-2 py-1 bg-slate-700/60 border border-white/10">OK</span>
+        </div>
+        <div class="mt-3 flex items-end justify-between">
+          <div class="text-3xl font-extrabold">
+            <span id="valSalinity" class="tick">0.0</span>
+            <span class="text-slate-400 text-lg">PSU</span>
+          </div>
+          <div class="h-12 w-28 bg-slate-800/60 rounded-md p-1">
+            <div id="barSalinity" class="h-full bg-emerald-500 rounded"></div>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-slate-400">Salt content</p>
+      </div>
+
+      <!-- Card: TDS reading -->
+      <div class="rounded-2xl bg-white/5 border border-white/10 p-5">
+        <div class="flex items-center justify-between">
+          <h4 class="font-bold">TDS</h4>
+          <span id="statusTDS" class="text-xs rounded-full px-2 py-1 bg-slate-700/60 border border-white/10">OK</span>
+        </div>
+        <div class="mt-3 flex items-end justify-between">
+          <div class="text-3xl font-extrabold">
+            <span id="valTDS" class="tick">0</span>
+            <span class="text-slate-400 text-lg">ppm</span>
+          </div>
+          <div class="h-12 w-28 bg-slate-800/60 rounded-md p-1">
+            <div id="barTDS" class="h-full bg-emerald-500 rounded"></div>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-slate-400">Dissolved solids</p>
+      </div>
+
+      <!-- Card: Temperature reading -->
+      <div class="rounded-2xl bg-white/5 border border-white/10 p-5">
+        <div class="flex items-center justify-between">
+          <h4 class="font-bold">Temperature</h4>
+          <span id="statusTemp" class="text-xs rounded-full px-2 py-1 bg-slate-700/60 border border-white/10">OK</span>
+        </div>
+        <div class="mt-3 flex items-end justify-between">
+          <div class="text-3xl font-extrabold">
+            <span id="valTemp" class="tick">0.0</span>
+            <span class="text-slate-400 text-lg">°C</span>
+          </div>
+          <div class="h-12 w-28 bg-slate-800/60 rounded-md p-1">
+            <div id="barTemp" class="h-full bg-emerald-500 rounded"></div>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-slate-400">Water temperature</p>
+      </div>
+
+      <!-- Card: Dissolved Oxygen reading -->
+      <div class="rounded-2xl bg-white/5 border border-white/10 p-5">
+        <div class="flex items-center justify-between">
+          <h4 class="font-bold">Dissolved Oxygen</h4>
+          <span id="statusDO" class="text-xs rounded-full px-2 py-1 bg-slate-700/60 border border-white/10">OK</span>
+        </div>
+        <div class="mt-3 flex items-end justify-between">
+          <div class="text-3xl font-extrabold">
+            <span id="valDO" class="tick">0.0</span>
+            <span class="text-slate-400 text-lg">mg/L</span>
+          </div>
+          <div class="h-12 w-28 bg-slate-800/60 rounded-md p-1">
+            <div id="barDO" class="h-full bg-emerald-500 rounded"></div>
+          </div>
+        </div>
+        <p class="mt-2 text-xs text-slate-400">Oxygen available</p>
+      </div>
+    </section>
+
+    <!-- Tabs wrapper: Activity Logs and Download Day panels -->
+    <section class="mt-6">
+      <div class="rounded-2xl bg-white/5 border border-white/10">
+        <div class="flex gap-2 p-2 border-b border-white/10">
+          <button id="tabLogs" class="tab px-4 py-2 rounded-lg border border-white/10 tab-active">Activity log</button>
+          <button id="tabDownload" class="tab px-4 py-2 rounded-lg border border-white/10">Download day</button>
+        </div>
+
+        <!-- Panel: Activity Log (filter by date, toggle save, view entries) -->
+        <div id="logsPanel" class="p-5 space-y-4">
+          <div class="flex flex-wrap items-center gap-3">
+            <label class="text-sm text-slate-300">Date</label>
+            <input id="logDate" type="date" class="bg-slate-900/60 border border-white/10 rounded px-3 py-2 text-sm">
+            <button id="refreshLogs" class="text-sm px-3 py-2 rounded bg-slate-700/60 hover:bg-slate-700">Refresh</button>
+            <button id="downloadDayCSV" class="text-sm px-3 py-2 rounded bg-emerald-600/80 hover:bg-emerald-600 text-white">Download day CSV</button>
+            <label class="flex items-center gap-2 text-sm text-slate-300 ml-auto">
+              <input id="toggleSave" type="checkbox" class="accent-emerald-400" disabled>
+              <span>Save to Firebase</span>
+            </label>
+            <span class="text-sm text-slate-400">Entries: <span id="logCount">0</span></span>
+            <span id="saveStatus" class="text-xs text-slate-400">Saving off</span>
+          </div>
+          <div class="rounded-xl bg-slate-900/50 border border-white/10 p-4 h-64 overflow-auto">
+            <ul id="logsList" class="space-y-2 text-sm"></ul>
+            <div id="logsEmpty" class="text-slate-400 text-sm">No entries for this date yet.</div>
+          </div>
+        </div>
+
+        <!-- Panel: Download Day CSV help + action -->
+        <div id="downloadPanel" class="hidden p-5 space-y-3">
+          <p class="text-sm text-slate-300">Use “Download CSV” above the chart for the current snapshot, or “Download day CSV” here for today’s log.</p>
+          <div class="rounded-lg bg-slate-900/60 border border-white/10 p-4 text-sm text-slate-300">
+            Tip: If you keep history in your database (e.g. /history/yyyy-mm-dd/entries), I can fetch and export the full day directly. Right now, this page builds the day log from your live updates during the session.
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Disclosure -->
+    <section class="mt-6">
+      <div class="rounded-2xl bg-slate-900/60 border border-white/10 p-5 text-sm text-slate-300">
+        This connects directly in your browser. Paste your Firebase config once to auto-connect next time. No credentials are stored by Canva Code.
+      </div>
+    </section>
+  </div>
+
+  <!-- Modal: Paste Firebase config (saved locally) -->
+  <div id="cfgModal" class="hidden fixed inset-0 z-50 items-center justify-center">
+    <div class="absolute inset-0 backdrop"></div>
+    <div class="relative w-[min(700px,92vw)] rounded-2xl bg-slate-900 border border-white/10 p-5">
+      <h3 class="text-lg font-bold">Paste Firebase config JSON</h3>
+      <p class="text-sm text-slate-400 mt-1">From Firebase Console → Project settings → SDK setup and configuration.</p>
+      <textarea id="cfgInput" rows="7" class="mt-3 w-full rounded-lg bg-slate-800/70 border border-white/10 p-3 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400/50 placeholder:text-slate-500" placeholder='{"apiKey":"...","authDomain":"...","databaseURL":"https://<your-db>.firebasedatabase.app","projectId":"...","storageBucket":"<project>.appspot.com","appId":"..."}'></textarea>
+      <div class="mt-4 flex justify-end gap-2">
+        <button id="cfgCancel" class="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600">Cancel</button>
+        <button id="cfgSave" class="px-4 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white">Save & Connect</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ==========================================================
+    // App script: Firebase connect, live UI, logs, AI, downloads
+    // Each section below has labels to help debugging quickly.
+    // ==========================================================
+    // CONFIG: safety – keep null and paste your config via the dialog.
+    const FIREBASE_CONFIG = null;
+
+    // Fixed Realtime Database paths
+    const PATHS = {
+      ph: '/live-data/ph',
+      salinity: '/live-data/salinity',
+      tds: '/live-data/tds',
+      temp: '/live-data/temp',
+      do: '/live-data/do',
+      ts: '/live-data/ts',
+      prediction: '/live-data/prediction',
+      // Daily activity logs will be written under: /activity-log/YYYY-MM-DD/<auto-key>
+      activityRoot: '/activity-log'
+    };
+
+    const $ = (id) => document.getElementById(id);
+
+    // State
+    const state = {
+      connected: false,
+      saveToFirebase: true,
+      firebase: { app: null, db: null, listeners: [] },
+      points: [],
+      maxPoints: 90,
+      lastChartVal: null,
+      sensors: { ph: 7.8, salinity: 30.0, tds: 350, temp: 24.0, do: 6.5 },
+      extra: { ts: null, prediction: null },
+      logs: [],          // full session logs
+      lastSnapshotAt: 0  // throttle logging
+    };
+
+    // Ranges and helpers
+    const ranges = {
+      temp: { min: 0, max: 40 },
+      ph: { min: 6.0, max: 9.0 },
+      salinity: { min: 0, max: 40 },
+      tds: { min: 0, max: 1000 },
+      do: { min: 0, max: 14 }
+    };
+    const fmt = (n,d=2)=>Number(n).toFixed(d);
+    const clamp = (v,min,max)=>Math.max(min, Math.min(max, v));
+    const norm = (v,r)=>Math.max(0, Math.min(1, (v - r.min)/(r.max - r.min)));
+    const currentISO = ()=> new Date().toISOString();
+    const dayKeyFromISO = (iso)=> iso.slice(0,10); // YYYY-MM-DD
+
+    // Chart
+    const canvas = $('mainChart');
+    const ctx = canvas.getContext('2d');
+    function drawChart() {
+      const ratio = window.devicePixelRatio || 1;
+      const wCSS = canvas.clientWidth;
+      canvas.width = wCSS * ratio;
+      const w = canvas.width, h = canvas.height;
+      ctx.setTransform(1,0,0,1,0,0);
+      ctx.scale(ratio, 1);
+      ctx.clearRect(0,0,w,h);
+
+      // grid
+      ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+      ctx.lineWidth = 1;
+      for (let i=1;i<=4;i++){ const y=(h/5)*i; ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(w,y); ctx.stroke(); }
+
+      if (state.points.length < 2) return;
+      const values = state.points.map(p=>p.value);
+      const t0 = state.points[0].t, tN = state.points[state.points.length-1].t;
+      const span = Math.max(1, tN - t0);
+      const minV = Math.min(ranges.temp.min, ...values);
+      const maxV = Math.max(ranges.temp.max, ...values);
+      const pad = 8;
+
+      const grad = ctx.createLinearGradient(0,0,0,h);
+      grad.addColorStop(0,'rgba(56,189,248,0.9)');
+      grad.addColorStop(1,'rgba(16,185,129,0.9)');
+      ctx.strokeStyle = grad; ctx.lineWidth = 3;
+
+      ctx.beginPath();
+      state.points.forEach((p,i)=>{
+        const x = pad + (w - pad*2) * ((p.t - t0)/span);
+        const y = pad + (h - pad*2) * (1 - (p.value - minV)/((maxV-minV)||1));
+        if (i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+      });
+      ctx.stroke();
+
+      const last = state.points[state.points.length-1];
+      ctx.lineTo(pad + (w - pad*2) * ((last.t - t0)/span), h - pad);
+      ctx.lineTo(pad, h - pad);
+      ctx.closePath();
+      const fill = ctx.createLinearGradient(0,0,0,h);
+      fill.addColorStop(0,'rgba(56,189,248,0.18)');
+      fill.addColorStop(1,'rgba(16,185,129,0.03)');
+      ctx.fillStyle = fill; ctx.fill();
+    }
+    window.addEventListener('resize', drawChart);
+
+    // UI effects
+    function setTick(el,curr,prev){
+      el.classList.remove('up','down');
+      if (prev==null) return;
+      if (curr>prev) el.classList.add('up'); else if (curr<prev) el.classList.add('down');
+      setTimeout(()=>el.classList.remove('up','down'),200);
+    }
+    function trendText(curr,prev){
+      if (prev===null) return '—';
+      const diff = curr - prev;
+      if (Math.abs(diff) < 0.01) return 'Stable';
+      return diff > 0 ? 'Rising' : 'Falling';
+    }
+    function setStatus(el, ok, textOK='OK', textWarn='Check'){
+      el.textContent = ok ? textOK : textWarn;
+      el.className = ok
+        ? 'text-xs rounded-full px-2 py-1 bg-emerald-600/30 border border-emerald-500/40'
+        : 'text-xs rounded-full px-2 py-1 bg-amber-600/30 border border-amber-500/40';
+    }
+
+    // Activity logging (session + optional Firebase)
+    function saveLogToFirebase(entry){
+      try {
+        if (!state.connected || !state.saveToFirebase || !state.firebase.db) return;
+        const dayKey = dayKeyFromISO(entry.iso || currentISO());
+        const ref = state.firebase.db.ref(`${PATHS.activityRoot}/${dayKey}`).push();
+        ref.set(entry)
+          .then(()=>{
+            const s = $('saveStatus');
+            if (s) s.textContent = `Saved ${new Date().toLocaleTimeString()}`;
+          })
+          .catch(()=>{
+            const s = $('saveStatus');
+            if (s) s.textContent = 'Save failed';
+          });
+      } catch (e) {
+        const s = $('saveStatus');
+        if (s) s.textContent = 'Save failed';
+      }
+    }
+
+    function logSnapshot(reason='update'){
+      const nowISO = currentISO();
+      const entry = {
+        ts: state.extra.ts || nowISO,
+        iso: nowISO,
+        reason,
+        temp: state.sensors.temp,
+        ph: state.sensors.ph,
+        salinity: state.sensors.salinity,
+        tds: state.sensors.tds,
+        do: state.sensors.do,
+        prediction: state.extra.prediction || ''
+      };
+      state.logs.push(entry);
+      renderLogs();
+      saveLogToFirebase(entry);
+    }
+
+    function renderLogs(){
+      const list = $('logsList');
+      const empty = $('logsEmpty');
+      const date = $('logDate').value || dayKeyFromISO(currentISO());
+      const filtered = state.logs.filter(e => (e.iso || '').startsWith(date));
+      list.innerHTML = '';
+      if (!filtered.length){
+        empty.classList.remove('hidden');
+        $('logCount').textContent = '0';
+        return;
+      }
+      empty.classList.add('hidden');
+      filtered.forEach(e=>{
+        const li = document.createElement('li');
+        const tsText = (e.ts || e.iso).toString();
+        li.className = 'rounded-lg bg-slate-800/60 border border-white/10 p-3';
+        li.innerHTML = `
+          <div class="flex items-center justify-between">
+            <div class="text-slate-300 font-medium">${tsText}</div>
+            <div class="text-xs text-slate-400">${e.reason}</div>
+          </div>
+          <div class="mt-2 grid grid-cols-2 md:grid-cols-6 gap-2 text-xs text-slate-300">
+            <div>Temp: <span class="font-semibold">${fmt(e.temp,1)} °C</span></div>
+            <div>pH: <span class="font-semibold">${fmt(e.ph,2)}</span></div>
+            <div>Salinity: <span class="font-semibold">${fmt(e.salinity,1)} PSU</span></div>
+            <div>TDS: <span class="font-semibold">${Math.round(e.tds)} ppm</span></div>
+            <div>DO: <span class="font-semibold">${fmt(e.do,1)} mg/L</span></div>
+            <div>Predict: <span class="font-semibold">${e.prediction || '—'}</span></div>
+          </div>
+        `;
+        list.appendChild(li);
+      });
+      $('logCount').textContent = String(filtered.length);
+      list.scrollTop = list.scrollHeight;
+    }
+
+    // CSV utils
+    function toCSV(rows){
+      return rows.map(r => r.map(v => '"'+String(v).replaceAll('"','""')+'"').join(',')).join('\n');
+    }
+    function download(name, content, type='text/csv'){
+      const blob = new Blob([content], {type});
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = name; a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    // Chart update (temperature)
+    function updateChart(val){
+      const prev = state.lastChartVal; state.lastChartVal = val;
+      state.points.push({ t: Date.now(), value: val });
+      if (state.points.length > state.maxPoints) state.points.shift();
+      $('chartValue').textContent = fmt(val,1);
+      setTick($('chartValue'), val, prev);
+      $('chartTrend').textContent = trendText(val, prev);
+      $('lastUpdate').textContent = state.extra.ts || new Date().toLocaleTimeString();
+      $('pointCount').textContent = state.points.length;
+      drawChart();
+    }
+
+    // Sensor UI update
+    function updateBar(el, val, range, ok=true){
+      el.style.width = Math.round(norm(val, range) * 100) + '%';
+      el.className = `h-full rounded ${ ok ? 'bg-emerald-500' : 'bg-amber-500' }`;
+    }
+    function updateSensors(s) {
+      const prev = { ...state.sensors };
+      state.sensors = { ...state.sensors, ...s };
+
+      // pH
+      $('valPH').textContent = fmt(state.sensors.ph, 2);
+      setTick($('valPH'), state.sensors.ph, prev.ph);
+      const phOK = state.sensors.ph >= 7.6 && state.sensors.ph <= 8.4;
+      updateBar($('barPH'), state.sensors.ph, ranges.ph, phOK);
+      setStatus($('statusPH'), phOK);
+
+      // Salinity
+      $('valSalinity').textContent = fmt(state.sensors.salinity, 1);
+      setTick($('valSalinity'), state.sensors.salinity, prev.salinity);
+      const salOK = state.sensors.salinity >= 28 && state.sensors.salinity <= 36;
+      updateBar($('barSalinity'), state.sensors.salinity, ranges.salinity, salOK);
+      setStatus($('statusSalinity'), salOK);
+
+      // TDS
+      $('valTDS').textContent = Math.round(state.sensors.tds);
+      setTick($('valTDS'), state.sensors.tds, prev.tds);
+      const tdsOK = state.sensors.tds >= 100 && state.sensors.tds <= 800;
+      updateBar($('barTDS'), state.sensors.tds, ranges.tds, tdsOK);
+      setStatus($('statusTDS'), tdsOK);
+
+      // Temp
+      $('valTemp').textContent = fmt(state.sensors.temp, 1);
+      setTick($('valTemp'), state.sensors.temp, prev.temp);
+      const tempOK = state.sensors.temp >= 15 && state.sensors.temp <= 30;
+      updateBar($('barTemp'), state.sensors.temp, ranges.temp, tempOK);
+      setStatus($('statusTemp'), tempOK);
+
+      // DO
+      $('valDO').textContent = fmt(state.sensors.do, 1);
+      setTick($('valDO'), state.sensors.do, prev.do);
+      const doOK = state.sensors.do >= 5 && state.sensors.do <= 10;
+      updateBar($('barDO'), state.sensors.do, ranges.do, doOK);
+      setStatus($('statusDO'), doOK);
+
+      // Health bar
+      const okCount = [phOK, salOK, tdsOK, tempOK, doOK].filter(Boolean).length;
+      const score = okCount / 5;
+      const bar = $('healthBar');
+      bar.style.width = (score*100) + '%';
+      bar.className = `h-full ${ score > .6 ? 'bg-emerald-500' : score > .4 ? 'bg-amber-500' : 'bg-rose-500' }`;
+      const badge = $('siteHealth');
+      const note = $('healthNote');
+
+      if (state.extra.prediction) {
+        const label = String(state.extra.prediction).toLowerCase();
+        if (label.includes('poor') || label.includes('⚠')) {
+          badge.textContent = 'Alert';
+          badge.className = 'text-xs rounded-full px-2 py-1 bg-rose-600/30 border border-rose-500/40';
+          note.textContent = `Status: ${state.extra.prediction}`;
+        } else if (label.includes('watch')) {
+          badge.textContent = 'Watch';
+          badge.className = 'text-xs rounded-full px-2 py-1 bg-amber-600/30 border border-amber-500/40';
+          note.textContent = `Status: ${state.extra.prediction}`;
+        } else {
+          badge.textContent = 'Good';
+          badge.className = 'text-xs rounded-full px-2 py-1 bg-emerald-600/30 border border-emerald-500/40';
+          note.textContent = `Status: ${state.extra.prediction}`;
+        }
+      } else {
+        if (score > .6) {
+          badge.textContent = 'Good';
+          badge.className = 'text-xs rounded-full px-2 py-1 bg-emerald-600/30 border border-emerald-500/40';
+          note.textContent = 'All signals within normal ranges.';
+        } else if (score > .4) {
+          badge.textContent = 'Watch';
+          badge.className = 'text-xs rounded-full px-2 py-1 bg-amber-600/30 border border-amber-500/40';
+          note.textContent = 'Some values drifting from ideal.';
+        } else {
+          badge.textContent = 'Alert';
+          badge.className = 'text-xs rounded-full px-2 py-1 bg-rose-600/30 border border-rose-500/40';
+          note.textContent = 'Multiple values outside recommended ranges.';
+        }
+      }
+    }
+
+    // Tabs
+    function setActiveTab(which){
+      const logs = $('tabLogs'), dl = $('tabDownload');
+      const panelLogs = $('logsPanel'), panelDL = $('downloadPanel');
+      if (which === 'logs'){
+        logs.classList.add('tab-active'); dl.classList.remove('tab-active');
+        panelLogs.classList.remove('hidden'); panelDL.classList.add('hidden');
+      } else {
+        dl.classList.add('tab-active'); logs.classList.remove('tab-active');
+        panelDL.classList.remove('hidden'); panelLogs.classList.add('hidden');
+      }
+    }
+    $('tabLogs').addEventListener('click', ()=> setActiveTab('logs'));
+    $('tabDownload').addEventListener('click', ()=> setActiveTab('download'));
+
+    // Snapshot CSV (latest)
+    document.addEventListener('click', (e)=>{
+      if(e.target && e.target.id === 'downloadCSV'){
+        const rows = [];
+        rows.push(['timestamp','temp_c','ph','salinity_psu','tds_ppm','do_mgL','prediction']);
+        const now = new Date().toISOString();
+        rows.push([state.extra.ts || now, state.sensors.temp, state.sensors.ph, state.sensors.salinity, state.sensors.tds, state.sensors.do, state.extra.prediction || '']);
+        download('seawater_snapshot.csv', toCSV(rows));
+      }
+    });
+
+    // Day CSV (from session log)
+    $('downloadDayCSV').addEventListener('click', ()=>{
+      const date = $('logDate').value || dayKeyFromISO(currentISO());
+      const filtered = state.logs.filter(e => (e.iso || '').startsWith(date));
+      const rows = [['timestamp','reason','temp_c','ph','salinity_psu','tds_ppm','do_mgL','prediction']];
+      filtered.forEach(e=>{
+        rows.push([e.ts || e.iso, e.reason, e.temp, e.ph, e.salinity, e.tds, e.do, e.prediction || '']);
+      });
+      download(`seawater_${date}.csv`, toCSV(rows));
+    });
+
+    // Logs date default + controls
+    (function initDate(){
+      const inp = $('logDate');
+      const today = dayKeyFromISO(currentISO());
+      inp.value = today;
+    })();
+    $('refreshLogs').addEventListener('click', renderLogs);
+
+    // AI Prediction (simple heuristic)
+    function runAIPrediction(){
+      const s = state.sensors;
+      const reasons = [];
+      let score = 100;
+
+      if (s.ph < 7.6 || s.ph > 8.4){ reasons.push(`pH ${fmt(s.ph,2)} out of ideal 7.6–8.4`); score -= 25; }
+      if (s.salinity < 28 || s.salinity > 36){ reasons.push(`Salinity ${fmt(s.salinity,1)} PSU out of 28–36`); score -= 20; }
+      if (s.do < 5 || s.do > 10){ reasons.push(`DO ${fmt(s.do,1)} mg/L out of 5–10`); score -= 25; }
+      if (s.temp < 15 || s.temp > 30){ reasons.push(`Temp ${fmt(s.temp,1)} °C out of 15–30`); score -= 15; }
+      if (s.tds < 100 || s.tds > 800){ reasons.push(`TDS ${Math.round(s.tds)} ppm out of 100–800`); score -= 10; }
+
+      let label = 'Good';
+      let color = 'bg-emerald-600/30 border-emerald-500/40';
+      if (score < 70){ label = 'Watch'; color = 'bg-amber-600/30 border-amber-500/40'; }
+      if (score < 50){ label = '⚠️ Poor'; color = 'bg-rose-600/30 border-rose-500/40'; }
+
+      const external = state.extra.prediction;
+      const finalLabel = external ? String(external) : label;
+      const why = external ? `External status: ${external}` : (reasons.length ? reasons.join('; ') : 'All signals in ideal ranges.');
+
+      const box = $('aiResult');
+      box.className = `mt-3 p-3 rounded-lg border text-sm ${color}`;
+      box.textContent = `${finalLabel} — ${why}`;
+
+      state.extra.prediction = finalLabel;
+      updateSensors({});
+      logSnapshot('ai check');
+    }
+    $('runAI').addEventListener('click', runAIPrediction);
+
+    // Firebase SDK loading
+    async function loadFirebaseSDKs() {
+      const urls = [
+        'https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js',
+        'https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js'
+      ];
+      for (const src of urls) {
+        await new Promise((res, rej) => {
+          const s = document.createElement('script');
+          s.src = src;
+          s.onload = res; s.onerror = () => rej(new Error('Failed to load Firebase SDK'));
+          document.head.appendChild(s);
+        });
+      }
+    }
+    function updateFBStatus(text){ $('fbStatus').textContent = text; }
+    function clearFBListeners(){
+      state.firebase.listeners.forEach(unsub => { try { unsub(); } catch(e){} });
+      state.firebase.listeners = [];
+    }
+    function setModeBadge(firebaseOn){
+      const badge = $('modeBadge'); const dot = $('modeDot'); const txt = $('modeText');
+      if (firebaseOn){
+        badge.classList.remove('bg-sky-700/30','border-sky-400/30');
+        badge.classList.add('bg-emerald-600/30','border-emerald-500/40');
+        dot.classList.remove('bg-yellow-400'); dot.classList.add('bg-emerald-400');
+        txt.textContent = 'Firebase';
+      } else {
+        badge.classList.remove('bg-emerald-600/30','border-emerald-500/40');
+        badge.classList.add('bg-sky-700/30','border-sky-400/30');
+        dot.classList.remove('bg-emerald-400'); dot.classList.add('bg-yellow-400');
+        txt.textContent = 'Demo mode';
+      }
+    }
+
+    // Modal to paste config
+    const cfgModal = $('cfgModal');
+    $('pasteBtn')?.addEventListener('click', ()=>{ cfgModal.classList.remove('hidden'); cfgModal.classList.add('flex'); });
+    $('cfgCancel').addEventListener('click', ()=>{ cfgModal.classList.add('hidden'); cfgModal.classList.remove('flex'); });
+    $('cfgSave').addEventListener('click', ()=>{
+      const raw = $('cfgInput').value.trim();
+      if (!raw) { alert('Please paste your Firebase config JSON.'); return; }
+      try {
+        const cfg = JSON.parse(raw);
+        localStorage.setItem('cc_firebase_config', JSON.stringify(cfg));
+        cfgModal.classList.add('hidden'); cfgModal.classList.remove('flex');
+        initFirebase(cfg);
+      } catch(e){ alert('That does not look like valid JSON.'); }
+    });
+
+    async function initFirebase(cfg) {
+      try {
+        updateFBStatus('Connecting...');
+        await loadFirebaseSDKs();
+        if (!window.firebase) throw new Error('SDK not available');
+
+        try { firebase.app().delete?.(); } catch(e){}
+        state.firebase.app = firebase.initializeApp(cfg);
+        state.firebase.db = firebase.database();
+
+        clearFBListeners();
+
+        // Subscriptions
+        const db = state.firebase.db;
+        const onVal = (path, cb) => {
+          const ref = db.ref(path);
+          const handler = ref.on('value', snap => cb(snap.val()), err=>console.error(err));
+          state.firebase.listeners.push(()=> ref.off('value', handler));
+        };
+
+        onVal(PATHS.temp, v => {
+          if (typeof v === 'number') { state.sensors.temp = v; updateChart(clamp(v, ranges.temp.min, ranges.temp.max)); }
+        });
+        onVal(PATHS.ph, v => { if (typeof v === 'number') updateSensors({ ph: v }); });
+        onVal(PATHS.salinity, v => { if (typeof v === 'number') updateSensors({ salinity: v }); });
+        onVal(PATHS.tds, v => { if (typeof v === 'number') updateSensors({ tds: v }); });
+        onVal(PATHS.do, v => { if (typeof v === 'number') updateSensors({ do: v }); });
+
+        // Use ts to capture snapshots when a full update comes in
+        onVal(PATHS.ts, v => {
+          if (v!=null) {
+            state.extra.ts = String(v);
+            $('lastUpdate').textContent = state.extra.ts;
+            const now = Date.now();
+            if (now - state.lastSnapshotAt > 4000) { // throttle to ~4s
+              state.lastSnapshotAt = now;
+              logSnapshot('sensor update');
+            }
+          }
+        });
+
+        onVal(PATHS.prediction, v => {
+          state.extra.prediction = v==null ? null : String(v);
+          updateSensors({});
+          logSnapshot('prediction update');
+        });
+
+        state.connected = true;
+        setModeBadge(true);
+        updateFBStatus('Connected (listening...)');
+        $('connBanner').classList.add('hidden');
+
+        // Enable save toggle once connected
+        const t = $('toggleSave');
+        if (t) {
+          t.disabled = false;
+          const savedPref = localStorage.getItem('cc_save_logs');
+          if (savedPref === 'on') {
+            t.checked = true;
+            state.saveToFirebase = true;
+            const s = $('saveStatus'); if (s) s.textContent = 'Saving on';
+          }
+          t.addEventListener('change', ()=>{
+            if (!state.connected) {
+              t.checked = false;
+              alert('Please connect to Firebase first.');
+              return;
+            }
+            state.saveToFirebase = t.checked;
+            localStorage.setItem('cc_save_logs', t.checked ? 'on' : 'off');
+            const s = $('saveStatus'); if (s) s.textContent = t.checked ? 'Saving on' : 'Saving off';
+          });
+        }
+      } catch (e) {
+        console.error(e);
+        state.connected = false;
+        setModeBadge(false);
+        showBanner('Could not connect. Paste your Firebase config to try again.');
+        updateFBStatus('Error connecting');
+
+        // Disable save toggle on failure
+        const t = $('toggleSave');
+        if (t) {
+          t.checked = false;
+          t.disabled = true;
+          state.saveToFirebase = false;
+          const s = $('saveStatus'); if (s) s.textContent = 'Saving off';
+        }
+      }
+    }
+
+    function showBanner(text){
+      $('connText').textContent = text || 'Not connected. Paste your Firebase config to auto-connect.';
+      $('connBanner').classList.remove('hidden');
+    }
+
+    // Bootstrap
+    (function bootstrap(){
+      drawChart();
+      setModeBadge(false);
+      setActiveTab('logs');
+
+      // Load saved config if present
+      const stored = localStorage.getItem('cc_firebase_config');
+      if (stored) {
+        try {
+          const cfg = JSON.parse(stored);
+          $('connText').textContent = 'Connecting to Firebase with your saved config...';
+          $('connBanner').classList.remove('hidden');
+          initFirebase(cfg);
+          return;
+        } catch(e){}
+      }
+
+      // If hardcoded (not recommended), use it
+      if (FIREBASE_CONFIG && typeof FIREBASE_CONFIG === 'object') {
+        $('connText').textContent = 'Connecting to Firebase...';
+        $('connBanner').classList.remove('hidden');
+        initFirebase(FIREBASE_CONFIG);
+        return;
+      }
+
+      // Else wait for user to paste
+      showBanner('Not connected. Paste your Firebase config to auto-connect.');
+    })();
+  </script>
+<script>(function(){function c(){var b=a.contentDocument||a.contentWindow.document;if(b){var d=b.createElement('script');d.innerHTML="window.__CF$cv$params={r:'9810ef1681e7db20',t:'MTc1ODE5OTQ1OC4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);";b.getElementsByTagName('head')[0].appendChild(d)}}if(document.body){var a=document.createElement('iframe');a.height=1;a.width=1;a.style.position='absolute';a.style.top=0;a.style.left=0;a.style.border='none';a.style.visibility='hidden';document.body.appendChild(a);if('loading'!==document.readyState)c();else if(window.addEventListener)document.addEventListener('DOMContentLoaded',c);else{var e=document.onreadystatechange||function(){};document.onreadystatechange=function(b){e(b);'loading'!==document.readyState&&(document.onreadystatechange=e,c())}}}})();</script></body>
+</html>

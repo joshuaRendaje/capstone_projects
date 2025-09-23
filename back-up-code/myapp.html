@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oyster AI Futuristic Dashboard</title>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Tailwind CSS -->
+  <link href="https://cdn.jsdelivr.net/npm/tailwindcss@3.3.3/dist/tailwind.min.css" rel="stylesheet">
+
+  <style>
+    body { background: linear-gradient(135deg,#0f172a 0%,#1e293b 100%); font-family: 'Inter', sans-serif; color: white; }
+    h1 { font-size: 3rem; text-align:center; font-weight:900; background: linear-gradient(90deg,#a855f7,#ec4899,#f87171); -webkit-background-clip: text; background-clip:text; -webkit-text-fill-color:transparent; margin-bottom:2rem; }
+    canvas { max-height: 400px; }
+    #live-cards { display:flex; justify-content:center; flex-wrap:wrap; gap:24px; margin-top:20px; }
+    .card { width:160px; height:160px; background:rgba(30,41,59,0.85); backdrop-filter:blur(8px); border:1px solid rgba(255,255,255,0.15); box-shadow:0 6px 25px rgba(0,0,0,0.5); display:flex; flex-direction:column; justify-content:center; align-items:center; border-radius:1rem; transition: transform 0.3s, box-shadow 0.3s; }
+    .card:hover { transform: scale(1.08); box-shadow:0 8px 35px rgba(255,255,255,0.2); }
+    .status-badge { display:inline-block; padding:3px 8px; border-radius:9999px; font-size:0.7rem; font-weight:700; margin-top:6px; text-align:center; }
+    #last-updated { text-align:center; font-size:0.875rem; color:#cbd5e1; margin-top:1.5rem; }
+    /* Tabs */
+    .tab { cursor:pointer; padding:10px 20px; border-bottom:2px solid transparent; transition:all 0.3s; font-weight:600; }
+    .tab-active { border-color:#f87171; color:#f87171; }
+    .tab-content { display:none; }
+    .tab-content-active { display:block; }
+    table { width:100%; border-collapse:collapse; }
+    th,td { padding:12px; border-bottom:1px solid rgba(255,255,255,0.2); text-align:left; }
+    th { color:#f87171; }
+    td { color:#fff; }
+  </style>
+</head>
+<body>
+
+<h1>Oyster AI Futuristic Dashboard</h1>
+
+<!-- Tabs -->
+<div class="flex justify-end gap-4 mb-6 px-6">
+  <div class="tab tab-active" data-tab="live">Live Dashboard</div>
+  <div class="tab" data-tab="stats">Statistic Record</div>
+</div>
+
+<!-- Tab Contents -->
+<div id="live" class="tab-content tab-content-active">
+  <div class="bg-gray-800 rounded-3xl shadow-2xl p-6 mb-8 border border-gray-700">
+    <canvas id="lineChart"></canvas>
+  </div>
+  <div id="live-cards"></div>
+  <p id="last-updated">⏱ Last updated: --</p>
+</div>
+
+<div id="stats" class="tab-content">
+  <div class="bg-gray-800 rounded-3xl shadow-2xl p-6 border border-gray-700">
+    <h2 class="text-xl font-bold mb-4 text-pink-400">Historical Statistic Records</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Timestamp</th>
+          <th>Temperature (°C)</th>
+          <th>TDS</th>
+          <th>Turbidity (NTU)</th>
+        </tr>
+      </thead>
+      <tbody id="stats-table-body"></tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+  // Tab switching
+  const tabs=document.querySelectorAll(".tab");
+  const contents=document.querySelectorAll(".tab-content");
+  tabs.forEach(tab=>tab.addEventListener("click",()=>{
+    tabs.forEach(t=>t.classList.remove("tab-active"));
+    tab.classList.add("tab-active");
+    contents.forEach(c=>c.classList.remove("tab-content-active"));
+    document.getElementById(tab.dataset.tab).classList.add("tab-content-active");
+  }));
+
+  // Firebase config
+  const firebaseConfig={
+    apiKey:"AIzaSyCjTkCAgC8l9PUiFIeWXpy2S2nH7foJHX8",
+    authDomain:"trial-reading.firebaseapp.com",
+    databaseURL:"https://trial-reading-default-rtdb.europe-west1.firebasedatabase.app",
+    projectId:"trial-reading",
+    storageBucket:"trial-reading.firebasestorage.app",
+    messagingSenderId:"541548808372",
+    appId:"1:541548808372:web:773b8f8cac50b0e4c2afe1"
+  };
+  firebase.initializeApp(firebaseConfig);
+  const dbRef=firebase.database().ref("trial_Reading");
+
+  // Futuristic Line Chart
+  const ctx=document.getElementById('lineChart').getContext('2d');
+  const gradientTemp=ctx.createLinearGradient(0,0,0,400);
+  gradientTemp.addColorStop(0,'rgba(248,113,113,0.5)');
+  gradientTemp.addColorStop(1,'rgba(248,113,113,0.1)');
+  const gradientTDS=ctx.createLinearGradient(0,0,0,400);
+  gradientTDS.addColorStop(0,'rgba(52,211,153,0.5)');
+  gradientTDS.addColorStop(1,'rgba(52,211,153,0.1)');
+  const gradientTurb=ctx.createLinearGradient(0,0,0,400);
+  gradientTurb.addColorStop(0,'rgba(251,191,36,0.5)');
+  gradientTurb.addColorStop(1,'rgba(251,191,36,0.1)');
+
+  const lineChart=new Chart(ctx,{
+    type:'line',
+    data:{ labels:[], datasets:[
+      { label:"🌡 Temperature (°C)", data:[], borderColor:"#f87171", backgroundColor:gradientTemp, fill:true, tension:0.4, pointStyle:'circle', pointRadius:6, pointHoverRadius:8, yAxisID:'y1', borderWidth:3 },
+      { label:"💧 TDS", data:[], borderColor:"#34d399", backgroundColor:gradientTDS, fill:true, tension:0.4, pointStyle:'rect', pointRadius:6, pointHoverRadius:8, yAxisID:'y1', borderWidth:3 },
+      { label:"🌊 Turbidity (NTU)", data:[], borderColor:"#fbbf24", backgroundColor:gradientTurb, fill:true, tension:0.4, pointStyle:'triangle', pointRadius:6, pointHoverRadius:8, yAxisID:'y2', borderWidth:3 }
+    ]},
+    options:{
+      responsive:true,
+      interaction:{ mode:'nearest', intersect:false },
+      animation:{ duration:1500, easing:'easeOutQuart' },
+      plugins:{ legend:{ labels:{ color:'#fff', font:{ size:14 } } }, tooltip:{ mode:'nearest', intersect:false } },
+      scales:{
+        x:{ title:{ display:true, text:"Timestamp", color:"#aaa", font:{ size:14 } }, ticks:{ color:"#aaa" }, grid:{ color:'rgba(255,255,255,0.1)'}},
+        y1:{ type:'linear', position:'left', title:{ display:true, text:"Temp & TDS", color:"#aaa", font:{ size:14 } }, ticks:{ color:"#aaa" }, grid:{ color:'rgba(255,255,255,0.1)'}},
+        y2:{ type:'linear', position:'right', title:{ display:true, text:"Turbidity (0–100 NTU)", color:"#fbbf24", font:{ size:14 } }, min:0, max:100, ticks:{ color:"#fbbf24" }, grid:{ drawOnChartArea:false }}
+      }
+    }
+  });
+
+  // Render Live Cards
+  function renderCards(latest){
+    const container=document.getElementById("live-cards"); container.innerHTML="";
+    const turbidityValue=latest.turbidity_ntu??latest.turbidity_voltage??latest.turbidity_raw??"--";
+    const cards=[
+      {label:"🌡 Temperature (°C)", value:latest.temperature, status:latest.temperature_status},
+      {label:"💧 TDS", value:latest.tds, status:latest.tds_status},
+      {label:"🌊 Turbidity (NTU)", value:turbidityValue, status:latest.turbidity_status}
+    ];
+    cards.forEach(card=>{
+      const div=document.createElement("div"); div.className="card";
+      div.innerHTML=`<p class="text-sm text-gray-400 mb-2">${card.label}</p>
+        <p class="text-3xl font-extrabold text-green-400">${card.value}</p>
+        <span class="status-badge ${card.status?.includes('❌')?'bg-red-400':card.status?.includes('⚠️')?'bg-yellow-400':'bg-green-400'}">${card.status??"--"}</span>`;
+      container.appendChild(div);
+    });
+  }
+
+  // Render 20 newest stats
+  function renderStatsTable(entries){
+    const tbody=document.getElementById("stats-table-body"); tbody.innerHTML="";
+    const newest20=entries.slice(-20).reverse();
+    newest20.forEach(e=>{
+      const tr=document.createElement("tr");
+      tr.innerHTML=`<td>${e.timestamp}</td><td>${e.temperature}</td><td>${e.tds}</td><td>${e.turbidity_ntu??e.turbidity_voltage??e.turbidity_raw??"--"}</td>`;
+      tbody.appendChild(tr);
+    });
+  }
+
+  // Fetch data and limit chart to 10 latest readings
+  function fetchLatestReadings(){
+    dbRef.orderByChild("timestamp").limitToLast(50).once("value",snapshot=>{
+      const data=snapshot.val(); if(!data) return;
+      const entries=Object.values(data).sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp));
+
+      const last10=entries.slice(-10); // only 10 newest timestamps for chart
+
+      lineChart.data.labels=last10.map(e=>e.timestamp);
+      lineChart.data.datasets[0].data=last10.map(e=>e.temperature);
+      lineChart.data.datasets[1].data=last10.map(e=>e.tds);
+      lineChart.data.datasets[2].data=last10.map(e=>e.turbidity_ntu??e.turbidity_voltage??e.turbidity_raw??0);
+      lineChart.update();
+
+      const latest=entries[entries.length-1];
+      renderCards(latest);
+      document.getElementById("last-updated").textContent=`⏱ Last updated: ${latest.timestamp}`;
+      renderStatsTable(entries);
+    });
+  }
+
+  fetchLatestReadings();
+  setInterval(fetchLatestReadings,15000);
+</script>
+</body>
+</html>

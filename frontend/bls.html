@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <title>Futuristic Login</title>
+    <style>
+        :root {
+            --primary: #00ffc3;
+            --background-light: #10141a;
+            --background-dark: #030510;
+            --text-light: #eaf8ff;
+            --text-dark: #22273a;
+            --card-bg-light: #181c24;
+            --card-bg-dark: #14151b;
+            --shadow: 0 0 24px #00ffc388, 0 0 2px #00ffc3cc;
+        }
+
+        body {
+            font-family: 'Orbitron', Arial, sans-serif;
+            background: var(--background-light);
+            color: var(--text-light);
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .login-container {
+            width: 340px;
+            margin: 80px auto;
+            padding: 32px 26px;
+            background: var(--card-bg-light);
+            border-radius: 12px;
+            box-shadow: var(--shadow);
+            position: relative;
+        }
+
+        .login-container::before {
+            content: '';
+            position: absolute;
+            inset: -4px;
+            border-radius: 14px;
+            background: linear-gradient(135deg, #00ffc3, #0c57f3 70%);
+            opacity: 0.12;
+            z-index: 0;
+        }
+
+        .login-container h2 {
+            text-align: center;
+            margin-bottom: 28px;
+            font-family: 'Orbitron', Arial, sans-serif;
+            letter-spacing: 1.5px;
+            color: var(--primary);
+            text-shadow: 0 0 6px #00ffc388;
+        }
+
+        .login-container label {
+            display: block;
+            margin-bottom: 7px;
+            font-weight: bold;
+            color: var(--primary);
+            text-transform: uppercase;
+            font-size: 13px;
+        }
+
+        .login-container input[type="text"],
+        .login-container input[type="password"] {
+            width: 100%;
+            padding: 10px;
+            margin-bottom: 18px;
+            border-radius: 5px;
+            border: 1px solid #00ffc399;
+            background: #0c1018;
+            color: var(--text-light);
+            font-size: 16px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+        .login-container input:focus {
+            border-color: #0c57f3;
+            box-shadow: 0 0 6px #0c57f388;
+        }
+
+        .login-container button {
+            width: 100%;
+            background: linear-gradient(90deg, #00ffc3 0%, #0c57f3 100%);
+            color: #10141a;
+            border: none;
+            padding: 12px 0;
+            border-radius: 5px;
+            font-size: 18px;
+            font-family: 'Orbitron', Arial, sans-serif;
+            letter-spacing: 1px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 0 12px #00ffc388;
+            transition: background 0.3s, color 0.3s;
+        }
+
+        .login-container button:hover {
+            background: linear-gradient(90deg, #0c57f3 0%, #00ffc3 100%);
+            color: #fff;
+        }
+
+        .mode-toggle {
+            position: absolute;
+            top: 18px;
+            right: 18px;
+            background: linear-gradient(90deg, #00ffc3 0%, #0c57f3 100%);
+            color: #10141a;
+            border: none;
+            border-radius: 50px;
+            padding: 8px 18px;
+            font-size: 13px;
+            font-family: 'Orbitron', Arial, sans-serif;
+            cursor: pointer;
+            box-shadow: 0 0 8px #00ffc388;
+            transition: background 0.3s, color 0.3s;
+            z-index: 2;
+        }
+
+        /* Dark Mode */
+        body.dark-mode {
+            background: var(--background-dark);
+            color: var(--text-dark);
+        }
+        body.dark-mode .login-container {
+            background: var(--card-bg-dark);
+        }
+        body.dark-mode .login-container h2 {
+            color: #0c57f3;
+            text-shadow: 0 0 8px #0c57f388;
+        }
+        body.dark-mode .login-container label {
+            color: #0c57f3;
+        }
+        body.dark-mode .login-container input[type="text"],
+        body.dark-mode .login-container input[type="password"] {
+            background: #22273a;
+            color: #fff;
+            border: 1px solid #0c57f3cc;
+        }
+        body.dark-mode .login-container button,
+        body.dark-mode .mode-toggle {
+            background: linear-gradient(90deg, #0c57f3 0%, #00ffc3 100%);
+            color: #fff;
+        }
+        body.dark-mode .login-container button:hover,
+        body.dark-mode .mode-toggle:hover {
+            background: linear-gradient(90deg, #00ffc3 0%, #0c57f3 100%);
+            color: #10141a;
+        }
+    </style>
+    <!-- Orbitron font for futuristic look -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="login-container">
+        <button class="mode-toggle" onclick="toggleMode()" id="modeBtn">Dark Mode</button>
+        <h2>Login</h2>
+        <form>
+            <label for="username">Username</label>
+            <input type="text" id="username" name="username" required>
+
+            <label for="password">Password</label>
+            <input type="password" id="password" name="password" required>
+
+            <button type="submit">Login</button>
+        </form>
+    </div>
+    <script>
+        // Dark/Light mode toggle logic
+        function toggleMode() {
+            document.body.classList.toggle('dark-mode');
+            const isDark = document.body.classList.contains('dark-mode');
+            document.getElementById('modeBtn').textContent = isDark ? 'Light Mode' : 'Dark Mode';
+        }
+    </script>
+</body>
+</html>

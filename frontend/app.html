@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oyster AI Dashboard</title>
+
+    <!-- Chart.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Orbitron', sans-serif;
+            background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+            color: #ffffff;
+            margin: 0;
+            padding: 0;
+            min-height: 100vh;
+            display: flex;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 250px;
+            background: linear-gradient(180deg, rgba(0, 0, 0, 0.8), rgba(0, 0, 0, 0.6));
+            backdrop-filter: blur(10px);
+            border-right: 1px solid rgba(0, 255, 255, 0.3);
+            padding: 1rem 0;
+            position: fixed;
+            height: 100vh;
+            left: 0;
+            top: 0;
+            z-index: 1000;
+            transition: transform 0.3s ease;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            padding: 1rem 1.5rem;
+            border-bottom: 1px solid rgba(0, 255, 255, 0.2);
+            margin-bottom: 1rem;
+        }
+
+        .sidebar-header h3 {
+            margin: 0;
+            color: #00fff7;
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+
+        .sidebar-nav {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .sidebar-nav li {
+            margin: 0.5rem 0;
+        }
+
+        .sidebar-nav a {
+            display: flex;
+            align-items: center;
+            padding: 0.8rem 1.5rem;
+            color: #a0f0ff;
+            text-decoration: none;
+            transition: all 0.3s ease;
+            border-left: 3px solid transparent;
+        }
+
+        .sidebar-nav a:hover,
+        .sidebar-nav a.active {
+            background: rgba(0, 255, 255, 0.1);
+            border-left-color: #00fff7;
+            color: #ffffff;
+        }
+
+        .sidebar-nav .icon {
+            margin-right: 0.8rem;
+            font-size: 1.1rem;
+        }
+
+        .sidebar-controls {
+            padding: 1rem 1.5rem;
+            border-top: 1px solid rgba(0, 255, 255, 0.2);
+            margin-top: 2rem;
+        }
+
+        .control-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .control-group label {
+            display: block;
+            color: #a0f0ff;
+            font-size: 0.9rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .control-group select,
+        .control-group input {
+            width: 100%;
+            padding: 0.5rem;
+            background: rgba(0, 255, 255, 0.1);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            border-radius: 5px;
+            color: #ffffff;
+            font-family: 'Orbitron', sans-serif;
+        }
+
+        .control-group select:focus,
+        .control-group input:focus {
+            outline: none;
+            border-color: #00fff7;
+            box-shadow: 0 0 5px rgba(0, 255, 255, 0.5);
+        }
+
+        .toggle-btn {
+            display: none;
+            position: fixed;
+            top: 1rem;
+            left: 1rem;
+            z-index: 1001;
+            background: rgba(0, 255, 255, 0.2);
+            border: 1px solid rgba(0, 255, 255, 0.5);
+            color: #ffffff;
+            padding: 0.5rem;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 1.2rem;
+        }
+
+        .main-content {
+            flex: 1;
+            margin-left: 250px;
+            transition: margin-left 0.3s ease;
+        }
+
+        header {
+            text-align: center;
+            padding: 1rem;
+            font-size: clamp(1.2rem, 3vw, 2rem);
+            letter-spacing: 2px;
+            background-color: rgba(0, 0, 0, 0.5);
+            font-weight: 700;
+        }
+
+        #dashboard {
+            max-width: 1200px;
+            margin: 0.5rem auto;
+            padding: 0.8rem;
+            background-color: rgba(0, 0, 0, 0.6);
+            border-radius: 15px;
+            box-shadow: 0 0 20px rgba(0, 255, 255, 0.3);
+            max-height: calc(100vh - 120px);
+            overflow: hidden;
+        }
+
+        .reading-card {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr);
+            gap: 0.8rem;
+            margin-bottom: 1rem;
+        }
+
+        .card {
+            background-color: rgba(0, 255, 255, 0.1);
+            padding: 0.8rem 0.5rem;
+            border-radius: 10px;
+            text-align: center;
+            box-shadow: 0 0 10px rgba(0, 255, 255, 0.3);
+            transition: transform 0.3s ease, box-shadow 0.3s ease, background-color 0.3s ease;
+            min-height: 70px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        /* Dynamic card colors that will be updated by JavaScript */
+        .card {
+            transition: background-color 0.5s ease, box-shadow 0.5s ease, transform 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+        }
+
+        /* Prediction card keeps its unique color */
+        #prediction-card {
+            background-color: rgba(128, 0, 255, 0.1);
+            box-shadow: 0 0 10px rgba(128, 0, 255, 0.3);
+        }
+
+        #prediction-card:hover {
+            box-shadow: 0 5px 20px rgba(128, 0, 255, 0.5);
+        }
+
+        .card h2 {
+            margin: 0.3rem 0 0 0;
+            font-size: clamp(1rem, 2.5vw, 1.5rem);
+            color: #00fff7;
+            font-weight: 700;
+        }
+
+        .card p {
+            margin: 0 0 0.3rem 0;
+            font-size: clamp(0.6rem, 1.5vw, 0.8rem);
+            color: #a0f0ff;
+            font-weight: 400;
+        }
+
+        .chart-container {
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 10px;
+            padding: 0.8rem;
+            margin-top: 0.8rem;
+            position: relative;
+            height: 280px;
+        }
+
+        #liveChart {
+            width: 100% !important;
+            height: 70% !important;
+        }
+
+        /* Mobile-specific styles */
+        @media (max-width: 768px) {
+            .sidebar {
+                transform: translateX(-100%);
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .main-content {
+                margin-left: 0;
+            }
+
+            .toggle-btn {
+                display: block;
+            }
+
+            header {
+                padding: 0.8rem 0.3rem 0.8rem 2.5rem;
+                font-size: 1.3rem;
+                letter-spacing: 1px;
+            }
+
+            #dashboard {
+                margin: 0.3rem;
+                padding: 0.6rem 0.3rem;
+                border-radius: 10px;
+                max-height: calc(100vh - 20px);
+            }
+
+            .reading-card {
+                grid-template-columns: repeat(6, 1fr);
+                gap: 0.2rem;
+                margin-bottom: 0.8rem;
+            }
+
+            .card {
+                padding: 0.6rem 0.2rem;
+                min-height: 60px;
+            }
+
+            .card h2 {
+                font-size: 0.9rem;
+                margin: 0.2rem 0 0 0;
+            }
+
+            .card p {
+                font-size: 0.6rem;
+                margin: 0 0 0.2rem 0;
+            }
+
+            .chart-container {
+                height: 180px;
+                padding: 0.4rem;
+                margin-top: 0.5rem;
+            }
+        }
+
+        /* Extra small mobile devices - 412x892 optimization */
+        @media (max-width: 480px) {
+            header {
+                font-size: 1.1rem;
+                padding: 0.6rem 0.2rem 0.6rem 2.5rem;
+            }
+
+            #dashboard {
+                margin: 0.2rem;
+                padding: 0.4rem 0.2rem;
+                max-height: calc(100vh - 70px);
+            }
+
+            .reading-card {
+                grid-template-columns: repeat(6, 1fr);
+                gap: 0.15rem;
+                margin-bottom: 0.6rem;
+            }
+
+            .card {
+                padding: 0.4rem 0.1rem;
+                min-height: 50px;
+            }
+
+            .card h2 {
+                font-size: 0.75rem;
+                margin: 0.1rem 0 0 0;
+            }
+
+            .card p {
+                font-size: 0.5rem;
+                margin: 0 0 0.1rem 0;
+            }
+
+            .chart-container {
+                height: 160px;
+                padding: 0.3rem;
+                margin-top: 0.4rem;
+
+            }
+        }
+
+        /* Large desktop screens */
+        @media (min-width: 1200px) {
+            #dashboard {
+                padding: 2rem;
+            }
+
+            .reading-card {
+                grid-template-columns: repeat(5, 1fr);
+                gap: 1.5rem;
+            }
+
+            .card {
+                padding: 2rem 1rem;
+                min-height: 120px;
+            }
+
+            .chart-container {
+                height: 350px;
+                padding: 1.5rem;
+            }
+        }
+
+        /* Loading animation */
+        .loading {
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.5;
+            }
+
+            100% {
+                opacity: 1;
+            }
+        }
+
+        /* Status indicators */
+        .status-good {
+            border-left: 4px solid #00ff00;
+        }
+
+        .status-warning {
+            border-left: 4px solid #ffff00;
+        }
+
+        .status-danger {
+            border-left: 4px solid #ff0000;
+        }
+
+        /* Connection status styles */
+        .status-online {
+            border-left: 4px solid #00ff00;
+            background-color: rgba(0, 255, 0, 0.1);
+        }
+
+        .status-offline {
+            border-left: 4px solid #ff0000;
+            background-color: rgba(255, 0, 0, 0.1);
+        }
+
+        .connection-indicator {
+            display: inline-block;
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            margin-right: 8px;
+            animation: pulse 2s infinite;
+        }
+
+        .online-dot {
+            background-color: #00ff00;
+        }
+
+        .offline-dot {
+            background-color: #ff0000;
+        }
+    </style>
+</head>
+
+<body>
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+            <h3>🦪 Oyster AI</h3>
+        </div>
+
+        <ul class="sidebar-nav">
+            <li><a href="#" class="active"><span class="icon">📊</span>Dashboard</a></li>
+            <li><a href="#"><span class="icon">📈</span>Analytics</a></li>
+            <li><a href="#"><span class="icon">⚙️</span>Sensors</a></li>
+            <li><a href="#"><span class="icon">🔔</span>Alerts</a></li>
+            <li><a href="#"><span class="icon">📋</span>Reports</a></li>
+            <li><a href="#"><span class="icon">🎯</span>Predictions</a></li>
+            <li><a href="#"><span class="icon">⚡</span>Settings</a></li>
+        </ul>
+
+        <div class="sidebar-controls">
+            <div class="control-group">
+                <label>Chart Type</label>
+                <select id="chartType">
+                    <option value="bar">Bar Chart</option>
+                    <option value="line" selected>Line Chart</option>
+                    <option value="radar">Radar Chart</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toggle Button for Mobile -->
+    <button class="toggle-btn" id="toggleBtn">☰</button>
+
+    <!-- Main Content -->
+    <div class="main-content">
+        <header>🦪 Oyster AI Live Dashboard</header>
+
+        <div id="dashboard">
+            <div class="reading-card">
+                <div class="card" id="temp-card">
+                    <p>Temperature (°C)</p>
+                    <h2 id="temperature">--</h2>
+                </div>
+                <div class="card" id="salinity-card">
+                    <p>Salinity (ppt)</p>
+                    <h2 id="salinity">--</h2>
+                </div>
+                <div class="card" id="ph-card">
+                    <p>pH Level</p>
+                    <h2 id="ph">--</h2>
+                </div>
+                <div class="card" id="do-card">
+                    <p>DO (mg/L)</p>
+                    <h2 id="do">--</h2>
+                </div>
+                <div class="card" id="turbidity-card">
+                    <p>Turbidity (NTU)</p>
+                    <h2 id="turbidity">--</h2>
+                </div>
+                <div class="card" id="prediction-card">
+                    <p>Connection Status</p>
+                    <h2 id="prediction">--</h2>
+                </div>
+            </div>
+
+            <div class="chart-container">
+                <canvas id="liveChart"></canvas>
+            </div>
+        </div>
+
+        <!-- Add latest reading display -->
+        <div id="reading"
+            style="margin: 1rem; padding: 1rem; background: rgba(255,255,255,0.1); border-radius: 10px; box-shadow: 0 0 10px rgba(255,255,255,0.3);">
+            <!-- Latest reading will be displayed here -->
+        </div>
+
+        <!-- New Chart for Readings -->
+        <div class="chart-container">
+            <canvas id="readingChart" width="400" height="200"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const firebaseHost = "https://trial-reading-default-rtdb.europe-west1.firebasedatabase.app/";
+        const firebasePath = "trial_Reading";
+        const predictionEndpoint = "http://192.168.88.95:8000/sensor-data";
+        // FastAPI endpoint
+
+        let updateIntervalId;
+        let currentUpdateInterval = 5000;
+
+        // Chart.js setup with responsive configuration
+        const ctx = document.getElementById('liveChart').getContext('2d');
+        const liveChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: ['Temperature', 'Salinity', 'pH', 'DO', 'Turbidity'],
+                datasets: [{
+                    label: 'Live Sensor Readings',
+                    data: [0, 0, 0, 0, 0],
+                    backgroundColor: 'rgba(0, 255, 255, 0.1)',
+                    borderColor: 'rgba(0, 255, 255, 1)',
+                    borderWidth: 3,
+                    fill: true,
+                    tension: 0.4,
+                    pointBackgroundColor: [
+                        'rgba(0, 255, 255, 1)',
+                        'rgba(0, 200, 255, 1)',
+                        'rgba(0, 150, 255, 1)',
+                        'rgba(0, 255, 150, 1)',
+                        'rgba(255, 200, 0, 1)'
+                    ],
+                    pointBorderColor: '#ffffff',
+                    pointBorderWidth: 2,
+                    pointRadius: 6,
+                    pointHoverRadius: 8
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        labels: {
+                            color: '#ffffff',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        }
+                    }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#ffffff',
+                            font: {
+                                family: 'Orbitron'
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#ffffff',
+                            font: {
+                                family: 'Orbitron',
+                                size: window.innerWidth < 768 ? 10 : 12
+                            }
+                        },
+                        grid: {
+                            color: 'rgba(255, 255, 255, 0.1)'
+                        }
+                    }
+                }
+            }
+        });
+
+        // New chart for readings
+        const ctxReadings = document.getElementById('readingChart').getContext('2d');
+        const readingChart = new Chart(ctxReadings, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    { label: 'Turbidity', data: [], borderColor: 'blue', fill: false },
+                    { label: 'DO', data: [], borderColor: 'green', fill: false },
+                    { label: 'Temperature', data: [], borderColor: 'red', fill: false }
+                ]
+            },
+            options: {
+                scales: {
+                    x: { title: { display: true, text: 'Timestamp' } },
+                    y: { title: { display: true, text: 'Value' } }
+                }
+            }
+        });
+
+        async function fetchReadings() {
+            const response = await fetch('http://localhost:8000/all-readings');
+            const data = await response.json();
+            const keys = Object.keys(data);
+            const readings = keys.map(k => data[k]);
+            readingChart.data.labels = readings.map(r => r.timestamp);
+            readingChart.data.datasets[0].data = readings.map(r => r.turbidity_NTU);
+            readingChart.data.datasets[1].data = readings.map(r => r.dissolved_oxygen_mgL);
+            readingChart.data.datasets[2].data = readings.map(r => r.temperature_C);
+            readingChart.update();
+        }
+        setInterval(fetchReadings, 2000);
+        fetchReadings();
+
+        // Sidebar functionality
+        document.getElementById('toggleBtn').addEventListener('click', function () {
+            const sidebar = document.getElementById('sidebar');
+            sidebar.classList.toggle('open');
+        });
+
+        // Close sidebar when clicking outside on mobile
+        document.addEventListener('click', function (event) {
+            const sidebar = document.getElementById('sidebar');
+            const toggleBtn = document.getElementById('toggleBtn');
+
+            if (window.innerWidth <= 768 &&
+                !sidebar.contains(event.target) &&
+                !toggleBtn.contains(event.target) &&
+                sidebar.classList.contains('open')) {
+                sidebar.classList.remove('open');
+            }
+        });
+
+
+
+        // Chart type control
+        document.getElementById('chartType').addEventListener('change', function () {
+            const newType = this.value;
+            liveChart.config.type = newType;
+
+            if (newType === 'radar') {
+                liveChart.options.scales = {
+                    r: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#ffffff',
+                            font: { family: 'Orbitron' }
+                        },
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' },
+                        pointLabels: {
+                            color: '#ffffff',
+                            font: { family: 'Orbitron' }
+                        }
+                    }
+                };
+            } else {
+                liveChart.options.scales = {
+                    y: {
+                        beginAtZero: true,
+                        ticks: {
+                            color: '#ffffff',
+                            font: { family: 'Orbitron' }
+                        },
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                    },
+                    x: {
+                        ticks: {
+                            color: '#ffffff',
+                            font: {
+                                family: 'Orbitron',
+                                size: window.innerWidth < 768 ? 10 : 12
+                            }
+                        },
+                        grid: { color: 'rgba(255, 255, 255, 0.1)' }
+                    }
+                };
+            }
+
+            liveChart.update();
+        });
+
+
+
+        // Add status indicators based on values
+        function updateCardStatus(cardId, value, optimalRange) {
+            const card = document.getElementById(cardId);
+            card.classList.remove('status-good', 'status-warning', 'status-danger');
+
+            if (value >= optimalRange.min && value <= optimalRange.max) {
+                card.classList.add('status-good');
+            } else if (value >= optimalRange.warning.min && value <= optimalRange.warning.max) {
+                card.classList.add('status-warning');
+            } else {
+                card.classList.add('status-danger');
+            }
+        }
+
+        // Optimal ranges for oyster farming
+        const optimalRanges = {
+            temperature: { min: 20, max: 30, warning: { min: 15, max: 35 } },
+            salinity: { min: 14, max: 28, warning: { min: 10, max: 35 } },
+            ph: { min: 7.5, max: 8.5, warning: { min: 7.0, max: 9.0 } },
+            do: { min: 5, max: 12, warning: { min: 3, max: 15 } },
+            turbidity: { min: 0, max: 25, warning: { min: 0, max: 50 } }
+        };
+
+        // Update card colors to match chart bars based on actual readings
+        function updateCardColors(readings) {
+            const cardData = [
+                { id: 'temp-card', value: readings.temperature || 0, baseColor: [0, 255, 255] },
+                { id: 'salinity-card', value: readings.salinity || 0, baseColor: [0, 200, 255] },
+                { id: 'ph-card', value: readings.ph || 0, baseColor: [0, 150, 255] },
+                { id: 'do-card', value: readings.do || 0, baseColor: [0, 255, 150] },
+                { id: 'turbidity-card', value: readings.turbidity || 0, baseColor: [255, 200, 0] }
+            ];
+
+            cardData.forEach((cardInfo) => {
+                const card = document.getElementById(cardInfo.id);
+                const [r, g, b] = cardInfo.baseColor;
+
+                // Calculate intensity based on reading value (0-100 scale)
+                let intensity = Math.min(cardInfo.value / 50, 1); // Normalize to 0-1
+                if (intensity < 0.1) intensity = 0.1; // Minimum visibility
+
+                // Create dynamic colors based on reading intensity
+                const bgColor = `rgba(${r}, ${g}, ${b}, ${0.1 + intensity * 0.3})`;
+                const borderColor = `rgba(${r}, ${g}, ${b}, ${0.3 + intensity * 0.4})`;
+                const hoverColor = `rgba(${r}, ${g}, ${b}, ${0.5 + intensity * 0.3})`;
+
+                // Apply colors
+                card.style.backgroundColor = bgColor;
+                card.style.boxShadow = `0 0 ${10 + intensity * 10}px ${borderColor}`;
+
+                // Update hover effect with dynamic colors
+                card.onmouseenter = () => {
+                    card.style.boxShadow = `0 5px ${20 + intensity * 10}px ${hoverColor}`;
+                };
+                card.onmouseleave = () => {
+                    card.style.boxShadow = `0 0 ${10 + intensity * 10}px ${borderColor}`;
+                };
+
+                // Update chart bar colors to match
+                const chartDataset = liveChart.data.datasets[0];
+                const cardIndex = cardData.findIndex(c => c.id === cardInfo.id);
+                if (cardIndex !== -1) {
+                    chartDataset.backgroundColor[cardIndex] = `rgba(${r}, ${g}, ${b}, ${0.6 + intensity * 0.2})`;
+                    chartDataset.borderColor[cardIndex] = `rgba(${r}, ${g}, ${b}, ${0.8 + intensity * 0.2})`;
+                }
+            });
+
+            // Update the chart with new colors
+            liveChart.update('none'); // Update without animation for smoother experience
+        }
+
+
+
+        // Fetch latest data from Firebase
+        async function fetchLiveData() {
+            try {
+                // Add loading animation
+                document.querySelectorAll('.card').forEach(card => card.classList.add('loading'));
+
+                const response = await fetch(firebaseHost + firebasePath);
+                const data = await response.json();
+
+                if (data) {
+                    // Get the latest reading
+                    const latestKey = Object.keys(data).sort().pop();
+                    const latestReading = data[latestKey];
+
+                    // Debug: Log the data structure to console
+                    console.log('Latest reading:', latestReading);
+                    console.log('Available fields:', Object.keys(latestReading));
+
+                    // Update display values - using exact Firebase field names
+                    document.getElementById('temperature').textContent = latestReading.temperature?.toFixed(1) || '--';
+                    document.getElementById('salinity').textContent = latestReading.salinity?.toFixed(1) || '--';
+                    document.getElementById('ph').textContent = latestReading.ph?.toFixed(2) || '--';
+                    document.getElementById('do').textContent = latestReading.do?.toFixed(1) || '--';
+                    document.getElementById('turbidity').textContent = latestReading.turbidity?.toFixed(1) || '--';
+
+                    // Update chart - using exact Firebase field names
+                    liveChart.data.datasets[0].data = [
+                        latestReading.temperature || 0,
+                        latestReading.salinity || 0,
+                        latestReading.ph || 0,
+                        latestReading.do || 0,
+                        latestReading.turbidity || 0
+                    ];
+                    liveChart.update();
+
+                    // Update card colors to match chart based on readings
+                    updateCardColors(latestReading);
+
+                    // Update status indicators - using exact Firebase field names
+                    updateCardStatus('temp-card', latestReading.temperature, optimalRanges.temperature);
+                    updateCardStatus('salinity-card', latestReading.salinity, optimalRanges.salinity);
+                    updateCardStatus('ph-card', latestReading.ph, optimalRanges.ph);
+                    updateCardStatus('do-card', latestReading.do, optimalRanges.do);
+                    updateCardStatus('turbidity-card', latestReading.turbidity, optimalRanges.turbidity);
+
+                    // Update connection status and get prediction if online
+                    updateConnectionStatus();
+                    await getPrediction(latestReading);
+                }
+
+                // Remove loading animation
+                document.querySelectorAll('.card').forEach(card => card.classList.remove('loading'));
+
+            } catch (error) {
+                console.error('Error fetching data:', error);
+                updateConnectionStatus();
+                document.querySelectorAll('.card').forEach(card => card.classList.remove('loading'));
+            }
+        }
+
+        // Check internet connection status
+        function updateConnectionStatus() {
+            const predictionCard = document.getElementById('prediction-card');
+            const predictionElement = document.getElementById('prediction');
+
+            if (navigator.onLine) {
+                predictionCard.className = 'card status-online';
+                predictionElement.innerHTML = '<span class="connection-indicator online-dot"></span>Online';
+            } else {
+                predictionCard.className = 'card status-offline';
+                predictionElement.innerHTML = '<span class="connection-indicator offline-dot"></span>Offline';
+            }
+        }
+
+        // Get growth prediction from FastAPI (only when online)
+        async function getPrediction(sensorData) {
+            if (!navigator.onLine) {
+                return; // Skip prediction if offline
+            }
+
+            try {
+                const response = await fetch(predictionEndpoint, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        temperature: sensorData.temperature,
+                        salinity: sensorData.salinity,
+                        ph: sensorData.ph,
+                        dissolved_oxygen: sensorData.do,
+                        turbidity: sensorData.turbidity
+                    })
+                });
+
+                if (response.ok) {
+                    const prediction = await response.json();
+                    const predictionElement = document.getElementById('prediction');
+                    predictionElement.innerHTML = '<span class="connection-indicator online-dot"></span>' +
+                        (prediction.growth_rate?.toFixed(2) + '%' || 'N/A');
+                } else {
+                    updateConnectionStatus(); // Update to show offline if API fails
+                }
+            } catch (error) {
+                console.error('Prediction API error:', error);
+                updateConnectionStatus(); // Update to show offline if API fails
+            }
+        }
+
+        // Update chart font size on window resize
+        window.addEventListener('resize', () => {
+            liveChart.options.scales.x.ticks.font.size = window.innerWidth < 768 ? 10 : 12;
+            liveChart.update();
+        });
+
+        // Listen for online/offline events
+        window.addEventListener('online', () => {
+            console.log('Connection restored');
+            updateConnectionStatus();
+            fetchLiveData(); // Fetch data immediately when back online
+        });
+
+        window.addEventListener('offline', () => {
+            console.log('Connection lost');
+            updateConnectionStatus();
+        });
+
+        // Initial setup
+        updateConnectionStatus();
+        fetchLiveData();
+        updateIntervalId = setInterval(fetchLiveData, currentUpdateInterval);
+
+        // Add touch-friendly interactions for mobile
+        if ('ontouchstart' in window) {
+            document.querySelectorAll('.card').forEach(card => {
+                card.addEventListener('touchstart', function () {
+                    this.style.transform = 'translateY(-3px)';
+                });
+
+                card.addEventListener('touchend', function () {
+                    this.style.transform = 'translateY(0)';
+                });
+            });
+        }
+
+        // Fetch and display latest readings from FastAPI
+        async function fetchReadings() {
+            try {
+                const response = await fetch('http://localhost:8000/all-readings');
+                const data = await response.json();
+                // Get the latest reading (last key)
+                const keys = Object.keys(data);
+                if (keys.length > 0) {
+                    const latest = data[keys[keys.length - 1]];
+                    document.getElementById('reading').innerText =
+                        `Turbidity: ${latest.turbidity_NTU}\n` +
+                        `DO: ${latest.dissolved_oxygen_mgL}\n` +
+                        `Temp: ${latest.temperature_C}\n` +
+                        `Time: ${latest.timestamp}`;
+                } else {
+                    document.getElementById('reading').innerText = "No readings yet.";
+                }
+            } catch (e) {
+                document.getElementById('reading').innerText = "Error fetching readings.";
+            }
+        }
+        // Poll every 2 seconds
+        setInterval(fetchReadings, 2000);
+        fetchReadings();
+    </script>
+    <script>(function () { function c() { var b = a.contentDocument || a.contentWindow.document; if (b) { var d = b.createElement('script'); d.innerHTML = "window.__CF$cv$params={r:'97a3d2a0942f211e',t:'MTc1NzA1NTM0NS4wMDAwMDA='};var a=document.createElement('script');a.nonce='';a.src='/cdn-cgi/challenge-platform/scripts/jsd/main.js';document.getElementsByTagName('head')[0].appendChild(a);"; b.getElementsByTagName('head')[0].appendChild(d) } } if (document.body) { var a = document.createElement('iframe'); a.height = 1; a.width = 1; a.style.position = 'absolute'; a.style.top = 0; a.style.left = 0; a.style.border = 'none'; a.style.visibility = 'hidden'; document.body.appendChild(a); if ('loading' !== document.readyState) c(); else if (window.addEventListener) document.addEventListener('DOMContentLoaded', c); else { var e = document.onreadystatechange || function () { }; document.onreadystatechange = function (b) { e(b); 'loading' !== document.readyState && (document.onreadystatechange = e, c()) } } } })();</script>
+</body>
+
+</html>

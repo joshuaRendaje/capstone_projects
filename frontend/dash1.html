@@ -1,0 +1,258 @@
+frontend 
+
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="utf-8" />
+  <title>Sea Water Monitoring (Live & Logs)</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    .badge {
+      font-size: .75rem;
+      padding: .15rem .5rem;
+      border-radius: .5rem
+    }
+  </style>
+</head>
+
+<body class="min-h-screen bg-slate-900 text-white">
+  <div class="max-w-7xl mx-auto p-4">
+    <header class="flex items-center justify-between">
+      <h1 class="text-2xl font-bold">Sea Water Monitoring</h1>
+      <div class="flex items-center gap-3">
+        <span id="fbStatus" class="badge bg-slate-700">Firebase: Connecting…</span>
+        <span id="predBadge" class="badge bg-slate-700">Prediction: —</span>
+      </div>
+    </header>
+
+    <nav class="mt-4 flex gap-2">
+      <button id="tabLive" class="px-3 py-2 rounded bg-emerald-600">Live</button>
+      <button id="tabLogs" class="px-3 py-2 rounded bg-slate-700 hover:bg-slate-600">Logs</button>
+    </nav>
+
+    <!-- LIVE -->
+    <section id="viewLive" class="mt-4 grid lg:grid-cols-3 gap-4">
+      <div class="lg:col-span-2 rounded-xl bg-slate-800 border border-white/10 p-4">
+        <h2 class="font-semibold">Water Level (ECharts)</h2>
+        <div id="chartLevel" style="height:320px;"></div>
+      </div>
+      <div class="rounded-xl bg-slate-800 border border-white/10 p-4">
+        <h2 class="font-semibold mb-2">Current Readings</h2>
+        <div id="nowBox" class="text-sm space-y-1 text-slate-300">—</div>
+        <div class="mt-3 flex gap-2">
+          <button id="btnPredictLive" class="px-3 py-2 rounded bg-sky-600 hover:bg-sky-500">Run AI (from live)</button>
+          <button id="btnPredictLogs" class="px-3 py-2 rounded bg-amber-600 hover:bg-amber-500">Run AI (from
+            logs)</button>
+          <!-- 🔧 Palitan URL ng FastAPI mo sa JS sa ibaba -->
+        </div>
+      </div>
+
+      <div class="lg:col-span-3 rounded-xl bg-slate-800 border border-white/10 p-4">
+        <h2 class="font-semibold">Sensor Trends (last 30)</h2>
+        <div id="chartSensors" style="height:360px;"></div>
+      </div>
+    </section>
+
+    <!-- LOGS -->
+    <section id="viewLogs" class="mt-4 hidden">
+      <div class="rounded-xl bg-slate-800 border border-white/10 p-4 overflow-auto">
+        <h2 class="font-semibold mb-2">Activity Logs</h2>
+        <table class="min-w-full text-sm">
+          <thead class="text-slate-300">
+            <tr>
+              <th class="text-left p-2">Time</th>
+              <th class="text-right p-2">pH</th>
+              <th class="text-right p-2">Salinity</th>
+              <th class="text-right p-2">TDS</th>
+              <th class="text-right p-2">Temp</th>
+              <th class="text-right p-2">DO</th>
+              <th class="text-right p-2">Turbidity</th>
+              <th class="text-left p-2">Prediction</th>
+            </tr>
+          </thead>
+          <tbody id="logsBody" class="text-slate-300"></tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <!-- Firebase v10 (modular) -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js";
+    import { getDatabase, ref, onValue, get } from "https://www.gstatic.com/firebasejs/10.12.3/firebase-database.js";
+
+    // ===============================
+    // 🔧 Firebase Config (palitan)
+    // ===============================
+    const firebaseConfig = {
+  apiKey: "AIzaSyBT9Ts7cg3LH7b-HB_iYFv3OJzm3k9ZlSQ",
+  authDomain: "oystermonitoring-df4d0.firebaseapp.com",
+  databaseURL: "https://oystermonitoring-df4d0-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "oystermonitoring-df4d0",
+  storageBucket: "oystermonitoring-df4d0.firebasestorage.app",
+  messagingSenderId: "30210616785",
+  appId: "1:30210616785:web:66b7f86fd5e8b07d9944f0"
+};
+
+    // 🔧 FastAPI base URL
+    const API_BASE = "http://localhost:8000";
+
+    // Init Firebase
+    const appFB = initializeApp(firebaseConfig);
+    const db = getDatabase(appFB);
+    const fbStatus = document.getElementById('fbStatus');
+
+    // Tabs
+    const tabLive = document.getElementById('tabLive');
+    const tabLogs = document.getElementById('tabLogs');
+    const viewLive = document.getElementById('viewLive');
+    const viewLogs = document.getElementById('viewLogs');
+    tabLive.onclick = () => {
+      tabLive.className = "px-3 py-2 rounded bg-emerald-600";
+      tabLogs.className = "px-3 py-2 rounded bg-slate-700 hover:bg-slate-600";
+      viewLive.classList.remove('hidden'); viewLogs.classList.add('hidden');
+    };
+    tabLogs.onclick = () => {
+      tabLogs.className = "px-3 py-2 rounded bg-emerald-600";
+      tabLive.className = "px-3 py-2 rounded bg-slate-700 hover:bg-slate-600";
+      viewLogs.classList.remove('hidden'); viewLive.classList.add('hidden');
+      loadLogs();
+    };
+
+    // ECharts – Level
+    const chartLevel = echarts.init(document.getElementById('chartLevel'), null, { renderer: 'canvas' });
+    const levelOption = {
+      tooltip: { trigger: 'axis' },
+      xAxis: { type: 'category', data: [] },
+      yAxis: { type: 'value', name: 'm' },
+      series: [{ name: 'Level', type: 'line', smooth: true, areaStyle: {}, data: [] }]
+    };
+    chartLevel.setOption(levelOption);
+
+    // ECharts – Sensors
+    const chartSensors = echarts.init(document.getElementById('chartSensors'), null, { renderer: 'canvas' });
+    const sensorsOption = {
+      tooltip: { trigger: 'axis' },
+      legend: { textStyle: { color: '#ddd' } },
+      xAxis: { type: 'category', data: [] },
+      yAxis: [{ type: 'value', name: 'Value' }],
+      series: [
+        { name: 'pH', type: 'line', smooth: true, data: [] },
+        { name: 'Salinity', type: 'line', smooth: true, data: [] },
+        { name: 'TDS', type: 'line', smooth: true, data: [] },
+        { name: 'Temp', type: 'line', smooth: true, data: [] },
+        { name: 'DO', type: 'line', smooth: true, data: [] },
+        { name: 'Turbidity', type: 'line', smooth: true, data: [] },
+      ]
+    };
+    chartSensors.setOption(sensorsOption);
+
+    // Live listener
+    const nowBox = document.getElementById('nowBox');
+    const predBadge = document.getElementById('predBadge');
+    const liveRef = ref(db, 'live-data');
+
+    onValue(liveRef, snap => {
+      const d = snap.val();
+      if (!d) { fbStatus.textContent = "Firebase: No live-data"; return; }
+      fbStatus.textContent = "Firebase: Online";
+
+      // Live “level” demo (optional): if you store a water level, use it; otherwise synthesize from salinity/temp
+      const ts = d.ts || new Date().toLocaleTimeString();
+      const level = d.level ?? (1.0 + (Math.sin(Date.now() / 60000) * 0.5)); // 🔧 replace with real `level` if you have
+
+      // Update Level chart (keep last 60)
+      const cats = levelOption.xAxis.data; const vals = levelOption.series[0].data;
+      cats.push(ts); vals.push(Number(level.toFixed(2)));
+      if (cats.length > 60) { cats.shift(); vals.shift(); }
+      chartLevel.setOption(levelOption);
+
+      // Update current box
+      nowBox.innerHTML = `
+        <div><b>Time:</b> ${ts}</div>
+        <div><b>pH:</b> ${Number(d.ph ?? 0).toFixed(2)}</div>
+        <div><b>Salinity:</b> ${Number(d.salinity ?? 0).toFixed(2)} ppt</div>
+        <div><b>TDS:</b> ${Number(d.tds ?? 0).toFixed(2)} ppm</div>
+        <div><b>Temp:</b> ${Number(d.temperature ?? 0).toFixed(2)} °C</div>
+        <div><b>DO:</b> ${Number(d.dissolved_oxygen ?? 0).toFixed(2)} mg/L</div>
+        <div><b>Turbidity:</b> ${Number(d.turbidity ?? 0).toFixed(2)} NTU</div>
+      `;
+
+      // Prediction badge (computed by FastAPI + written to Firebase)
+      const p = String(d.prediction || '').toLowerCase();
+      if (!p) { predBadge.textContent = "Prediction: —"; predBadge.className = "badge bg-slate-700"; }
+      else if (p.includes('optimal')) { predBadge.textContent = d.prediction; predBadge.className = "badge bg-emerald-600"; }
+      else { predBadge.textContent = d.prediction; predBadge.className = "badge bg-amber-600"; }
+    }, err => {
+      console.error(err);
+      fbStatus.textContent = "Firebase: Error";
+    });
+
+    // Logs table (ascending)
+    async function loadLogs() {
+      const snap = await get(ref(db, 'activity-logs'));
+      const data = snap.val();
+      const body = document.getElementById('logsBody');
+      body.innerHTML = '';
+      if (!data) { body.innerHTML = '<tr><td class="p-2">No logs yet.</td></tr>'; return; }
+      const arr = Object.values(data).sort((a, b) => new Date(a.ts) - new Date(b.ts));
+      // Update sensors trend chart (last 30)
+      const take = arr.slice(-30);
+      sensorsOption.xAxis.data = take.map(r => r.ts || '');
+      sensorsOption.series[0].data = take.map(r => Number(r.ph ?? 0));
+      sensorsOption.series[1].data = take.map(r => Number(r.salinity ?? 0));
+      sensorsOption.series[2].data = take.map(r => Number(r.tds ?? 0));
+      sensorsOption.series[3].data = take.map(r => Number(r.temperature ?? 0));
+      sensorsOption.series[4].data = take.map(r => Number(r.dissolved_oxygen ?? 0));
+      sensorsOption.series[5].data = take.map(r => Number(r.turbidity ?? 0));
+      chartSensors.setOption(sensorsOption);
+
+      // Fill table
+      for (const r of arr) {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td class="p-2 text-left">${r.ts || ''}</td>
+          <td class="p-2 text-right">${Number(r.ph ?? 0).toFixed(2)}</td>
+          <td class="p-2 text-right">${Number(r.salinity ?? 0).toFixed(2)}</td>
+          <td class="p-2 text-right">${Number(r.tds ?? 0).toFixed(2)}</td>
+          <td class="p-2 text-right">${Number(r.temperature ?? 0).toFixed(2)}</td>
+          <td class="p-2 text-right">${Number(r.dissolved_oxygen ?? 0).toFixed(2)}</td>
+          <td class="p-2 text-right">${Number(r.turbidity ?? 0).toFixed(2)}</td>
+          <td class="p-2 text-left">${r.prediction || ''}</td>
+        `;
+        body.appendChild(tr);
+      }
+    }
+
+    // Buttons: call FastAPI to compute prediction
+    document.getElementById('btnPredictLive').onclick = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/predict/from-live`);
+        const data = await res.json();
+        alert(`AI Prediction (live): ${data.prediction} (ts: ${data.ts})`);
+        // Firebase /live-data will be updated by the backend
+      } catch (e) {
+        alert('Failed to run prediction from live.');
+      }
+    };
+
+    document.getElementById('btnPredictLogs').onclick = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/predict/from-logs?n=20`);
+        const data = await res.json();
+        alert(`AI Prediction (latest log): ${data.prediction} (ts: ${data.ts})`);
+      } catch (e) {
+        alert('Failed to run prediction from logs.');
+      }
+    };
+
+    // Initial
+    loadLogs();
+    window.addEventListener('resize', () => { chartLevel.resize(); chartSensors.resize(); });
+  </script>
+</body>
+
+</html>

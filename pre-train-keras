@@ -1,0 +1,127 @@
+import os
+from datetime import datetime
+from typing import Dict, Any
+
+import pandas as pd
+import numpy as np
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import classification_report
+from fastapi import FastAPI
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import Dense
+from tensorflow.keras.utils import to_categorical
+
+from firebase.firebase_config import fetch_readings, save_prediction
+
+# ---------------- FastAPI App ----------------
+app = FastAPI(title="Oyster AI Train & Predict API", version="2.0.0")
+
+# ---------------- Model Path ----------------
+MODEL_DIR = "model"
+MODEL_PATH = os.path.join(MODEL_DIR, "oyster_growth_model.keras")
+SCALER_PATH = os.path.join(MODEL_DIR, "scaler.pkl")
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+# ---------------- Helper Function ----------------
+def label_growth(row: pd.Series) -> int:
+    """Label sensor readings as Good(1) or Bad(0)."""
+    if (
+        25 <= row["salinity"] <= 32 and
+        20 <= row["temperature"] <= 28 and
+        7.8 <= row["ph"] <= 8.2 and
+        row["turbidity"] <= 8 and
+        row["do"] >= 5
+    ):
+        return 1
+    return 0
+
+# ---------------- Endpoint ----------------
+@app.get("/train_predict")
+def train_and_predict() -> Dict[str, Any]:
+    # Fetch readings
+    readings = fetch_readings()
+    if not readings:
+        return {"status": "error", "message": "No sensor readings found in Firebase."}
+
+    df = pd.DataFrame(readings)
+    df["temperature"] = df["temperature"].astype(float)
+    df["salinity"] = df["salinity"].astype(float)
+    df["turbidity"] = df["turbidity"].astype(float)
+    df["ph"] = df["ph"].astype(float)
+    df["do"] = df["do"].astype(float)
+
+    # Label growth
+    df["growth_status"] = df.apply(label_growth, axis=1)
+
+    # Features & target
+    features = ["temperature", "salinity", "turbidity", "ph", "do"]
+    X = df[features].values
+    y = df["growth_status"].values
+
+    # Preprocess data (Scaling is crucial for Keras models)
+    scaler = MinMaxScaler()
+    X = scaler.fit_transform(X)
+    # Save the scaler to reuse for predictions
+    joblib.dump(scaler, SCALER_PATH)
+
+    # Convert labels to one-hot encoding for Keras
+    # 'Good' (1) becomes [0, 1] and 'Bad' (0) becomes [1, 0]
+    y_categorical = to_categorical(y, num_classes=2)
+
+    # Train/test split
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y_categorical, test_size=0.2, random_state=42, stratify=y
+    )
+
+    # Build Keras model
+    model = Sequential([
+        Dense(16, activation="relu", input_shape=(len(features),)),
+        Dense(8, activation="relu"),
+        Dense(2, activation="softmax")
+    ])
+
+    # Compile the model
+    model.compile(optimizer="adam", loss="categorical_crossentropy", metrics=["accuracy"])
+
+    # Train model
+    model.fit(X_train, y_train, epochs=20, batch_size=32, verbose=0)
+
+    # Evaluate
+    y_pred_probs = model.predict(X_test)
+    y_pred = np.argmax(y_pred_probs, axis=1)
+    y_test_labels = np.argmax(y_test, axis=1)
+    report = classification_report(y_test_labels, y_pred, zero_division=0, output_dict=True)
+
+    # Save Keras model
+    model.save(MODEL_PATH)
+
+    # ---------------- Predict for all readings ----------------
+    all_readings_scaled = scaler.transform(df[features].values)
+    all_predictions_probs = model.predict(all_readings_scaled)
+    all_predictions = np.argmax(all_predictions_probs, axis=1)
+
+    saved_predictions = []
+    for idx, row in df.iterrows():
+        pred_record = {
+            "temperature": row["temperature"],
+            "salinity": row["salinity"],
+            "turbidity": row["turbidity"],
+            "ph": row["ph"],
+            "do": row["do"],
+            "timestamp": row.get("timestamp", datetime.utcnow().isoformat()),
+            "predicted_growth": int(all_predictions[idx])
+        }
+        status_code, response_text = save_prediction(pred_record)
+        saved_predictions.append({
+            "predicted_growth": int(all_predictions[idx]),
+            "status_code": status_code
+        })
+
+    return {
+        "status": "success",
+        "message": "Model trained and predictions saved to Firebase.",
+        "model_path": MODEL_PATH,
+        "classification_report": report,
+        "total_predictions_saved": len(saved_predictions)
+    }

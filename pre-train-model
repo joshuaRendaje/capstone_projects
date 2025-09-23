@@ -1,0 +1,541 @@
+/* Smart Oyster — ESP32 data logger with seasonal simulation + calibration + CSV save + HTTP POST
+   - Saves CSV to SPIFFS: /dataset.csv
+   - Sends JSON to configured server endpoint (HTTP POST)
+   - Auto-detects season by NTP (Asia/Manila)
+   - Supports analog sensors; if a sensor is not present, will SIMULATE values with seasonal bias
+*/
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include "SPIFFS.h"
+#include "time.h"
+
+// ---------- CONFIG ----------
+const char* ssid = "YOUR_SSID";
+const char* password = "YOUR_PASS";
+
+// Server to POST to (FastAPI etc.)
+const char* serverName = "http://192.168.88.124:8000/api/sensor-data";
+
+// Timezone and NTP
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = 8 * 3600;   // Asia/Manila UTC+8
+const int   daylightOffset_sec = 0;
+
+// Pins (analog)
+const int phPin = 36;    // VP
+const int tempPin = 34;  // VN
+const int salPin = 35;
+const int turbidityPin = 32;
+const int doPin = 33;
+
+// UseSimulation: true -> generate simulated, false -> use analogRead converted by calibration
+bool useSimulation = false; // set true if no real sensors
+
+// Sampling interval (ms)
+const unsigned long SAMPLE_INTERVAL = 60UL * 1000UL; // 60 seconds
+
+// ---------- CALIBRATION (two-point linear): value = raw * slope + intercept ----------
+struct Calib { float slope; float intercept; };
+Calib cal_ph = { 0.0015, 0.0 };         // placeholder: convert ADC->voltage->pH (tune with real calibration)
+Calib cal_temp = { 0.01, -50.0 };       // placeholder: convert ADC->degC
+Calib cal_turbidity = { 0.05, -2.0 };   // placeholder: convert ADC->NTU
+Calib cal_do = { 0.02, 0.0 };           // placeholder: convert ADC->mg/L
+Calib cal_sal = { 0.02, 0.0 };          // placeholder: convert ADC->PSU
+
+// ---------- Simulation base ranges per season (means & std) ----------
+struct SeasonCfg {
+  const char* name;
+  float pH_mean; float pH_sd;
+  float T_mean; float T_sd;
+  float turb_mean; float turb_sd;
+  float DO_mean; float DO_sd;
+  float sal_mean; float sal_sd;
+  float rain_prob; float rain_mean;
+};
+
+SeasonCfg SUNNY = {"Sunny/Dry", 8.05, 0.08, 28.5, 0.6, 6.0, 2.5, 7.6, 0.6, 33, 0.8};
+SeasonCfg RAINY = {"Rainy", 7.75, 0.10, 26.0, 0.8, 18.0, 8.0, 6.0, 0.8, 23, 2.0};
+SeasonCfg COLD  = {"Cold/Amihan", 7.95, 0.06, 24.0, 0.5, 8.0, 3.0, 7.2, 0.7, 31, 1.0};
+
+// ---------- Misc ----------
+unsigned long lastSampleMillis = 0;
+String csvFilename = "/dataset.csv";
+
+// ---------- Helpers ----------
+float analogToVoltage(int raw) {
+  // ESP32 ADC range: 0-4095 -> 0-3.3V (approx), but ADC non-linear in some boards; calibrate accordingly
+  return (raw / 4095.0) * 3.3;
+}
+float applyCalib(int raw, Calib c) {
+  // default convert raw ADC value to unit via linear map (user should tune c.slope c.intercept)
+  return raw * c.slope + c.intercept;
+}
+float randn(float mu, float sigma){
+  // Box-Muller
+  float u1 = random(1, 10000) / 10000.0;
+  float u2 = random(1, 10000) / 10000.0;
+  float z0 = sqrt(-2.0 * log(u1)) * cos(2*M_PI*u2);
+  return z0 * sigma + mu;
+}
+
+String getISOTime() {
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return String("");
+  char buf[64];
+  strftime(buf, sizeof(buf), "%Y-%m-%dT%H:%M:%S%z", &timeinfo);
+  return String(buf);
+}
+
+const SeasonCfg* getSeasonFromMonth(int month) {
+  // Philippines seasons mapping (simple)
+  if (month >= 3 && month <= 5) return &SUNNY;        // Mar-May
+  else if (month >= 6 && month <= 11) return &RAINY; // Jun-Nov
+  else return &COLD;                                 // Dec-Feb
+}
+
+// ---------- Read / Simulate functions ----------
+float readPH() {
+  if (!useSimulation) {
+    int raw = analogRead(phPin);
+    return applyCalib(raw, cal_ph);
+  } else {
+    return randn(currentSeason->pH_mean, currentSeason->pH_sd);
+  }
+}
+float readTemperature() {
+  if (!useSimulation) {
+    int raw = analogRead(tempPin);
+    return applyCalib(raw, cal_temp);
+  } else {
+    // include diurnal effect: get hour and add small sin variation
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) return randn(currentSeason->T_mean, currentSeason->T_sd);
+    int h = timeinfo.tm_hour;
+    float diel = 0.8 * sin((h / 24.0) * 2 * M_PI); // -0.8..0.8
+    return randn(currentSeason->T_mean + diel, currentSeason->T_sd);
+  }
+}
+float readTurbidity(float antecedentRain24h) {
+  if (!useSimulation) {
+    int raw = analogRead(turbidityPin);
+    return applyCalib(raw, cal_turbidity);
+  } else {
+    float base = randn(currentSeason->turb_mean, currentSeason->turb_sd);
+    base += 0.6 * antecedentRain24h; // rain increases turbidity
+    return max(0.1, base);
+  }
+}
+float readDO(float antecedentRain24h) {
+  if (!useSimulation) {
+    int raw = analogRead(doPin);
+    return applyCalib(raw, cal_do);
+  } else {
+    // DO rises with solar/daytime; minor reduction with heavy rain
+    struct tm timeinfo;
+    if (!getLocalTime(&timeinfo)) return randn(currentSeason->DO_mean, currentSeason->DO_sd);
+    int h = timeinfo.tm_hour;
+    float solarFactor = (h >= 6 && h <= 18) ? 1.0 : 0.85;
+    float val = randn(currentSeason->DO_mean * solarFactor, currentSeason->DO_sd);
+    val -= 0.03 * antecedentRain24h;
+    return max(0.0, val);
+  }
+}
+float readSalinity(float tideEffect, float antecedentRain24h) {
+  if (!useSimulation) {
+    int raw = analogRead(salPin);
+    return applyCalib(raw, cal_sal);
+  } else {
+    float val = randn(currentSeason->sal_mean, currentSeason->sal_sd);
+    // rain desalinates; tide mixes salt
+    val -= 0.25 * min(antecedentRain24h, 40.0);
+    val += 0.4 * tideEffect; // tide effect [-1..1]*0.4
+    return constrain(val, 0.0, 40.0);
+  }
+}
+
+// ---------- CSV save ----------
+bool appendCSVLine(const String &line) {
+  File file = SPIFFS.open(csvFilename, FILE_APPEND);
+  if(!file){
+    Serial.println("Failed to open file for appending");
+    return false;
+  }
+  file.println(line);
+  file.close();
+  return true;
+}
+
+// ---------- HTTP POST ----------
+bool postJSON(const String &json) {
+  if (WiFi.status() != WL_CONNECTED) return false;
+  HTTPClient http;
+  http.begin(serverName);
+  http.addHeader("Content-Type", "application/json");
+  int code = http.POST(json);
+  if (code > 0) {
+    String payload = http.getString();
+    Serial.printf("POST %d: %s\n", code, payload.c_str());
+  } else {
+    Serial.printf("POST failed: %d\n", code);
+  }
+  http.end();
+  return (code >= 200 && code < 300);
+}
+
+// ---------- Globals for season usage ----------
+const SeasonCfg* currentSeason = &SUNNY;
+
+// Simple synthetic tide generator (sinusoid with period ~12.4 hours)
+float computeTideMeters(unsigned long epochSeconds) {
+  float hours = (epochSeconds / 3600.0);
+  return 0.9 * sin(2.0 * M_PI * hours / 12.4);
+}
+
+// Compute antecedent rainfall in last 24h: since we don't have real rain gauge on ESP,
+// we simulate a simple random accumulated rain over last 24h when in simulation.
+// For real deployments, get rainfall from weather API or local gauge.
+float computeAntecedentRain24h() {
+  if (!useSimulation) return 0.0; // or read real rain sensor if available
+  // Simple random but slightly correlated value
+  float base = random(0, 100) / 10.0;
+  return base;
+}
+
+// ---------- Setup ----------
+void setup() {
+  Serial.begin(115200);
+  delay(100);
+
+  // SPIFFS init
+  if(!SPIFFS.begin(true)){
+    Serial.println("SPIFFS Mount Failed");
+  } else {
+    Serial.println("SPIFFS mounted");
+  }
+
+  // WiFi connect
+  Serial.printf("Connecting to WiFi %s\n", ssid);
+  WiFi.begin(ssid, password);
+  unsigned long start = millis();
+  while (WiFi.status() != WL_CONNECTED && millis()-start < 20000) {
+    delay(500); Serial.print(".");
+  }
+  if (WiFi.status() == WL_CONNECTED) {
+    Serial.println("\nWiFi connected!");
+  } else {
+    Serial.println("\nWiFi not connected (will still log locally).");
+  }
+
+  // init time (NTP)
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+  Serial.println("Waiting for time sync...");
+  struct tm timeinfo;
+  int attempts = 0;
+  while(!getLocalTime(&timeinfo) && attempts < 10) {
+    delay(1000);
+    attempts++;
+  }
+  if (getLocalTime(&timeinfo)) {
+    Serial.println("Time synced.");
+  } else {
+    Serial.println("Time not synced; will use approximate time for season detection.");
+  }
+
+  // Create CSV header if not exists
+  if(!SPIFFS.exists(csvFilename)) {
+    File file = SPIFFS.open(csvFilename, FILE_WRITE);
+    if(file){
+      file.println("timestamp,season,temperature_C,pH,turbidity_NTU,DO_mgL,salinity_PSU,solar_Wm2,tide_m,antecedentRain24h_mm");
+      file.close();
+      Serial.println("CSV header created.");
+    }
+  }
+
+  lastSampleMillis = 0;
+  randomSeed(analogRead(0));
+}
+
+// ---------- Main loop ----------
+void loop() {
+  unsigned long now = millis();
+  if (now - lastSampleMillis < SAMPLE_INTERVAL) {
+    delay(200);
+    return;
+  }
+  lastSampleMillis = now;
+
+  // Get current time for season detection
+  struct tm timeinfo;
+  time_t epoch = time(NULL);
+  if (!getLocalTime(&timeinfo)) {
+    // fallback: use epoch
+    time(&epoch);
+    Serial.println("Using epoch for time.");
+  } else {
+    epoch = mktime(&timeinfo);
+  }
+  int mon = localtime(&epoch)->tm_mon + 1; // tm_mon 0-11
+  currentSeason = getSeasonFromMonth(mon);
+
+  // Compute tide and antecedent rain (simulated)
+  float tide = computeTideMeters(epoch);
+  float antecedentRain24h = computeAntecedRainHelperSim();
+
+  // For convenience: small solar proxy (0-1000)
+  int hour = localtime(&epoch)->tm_hour;
+  float solar = 0.0;
+  if (hour >= 6 && hour <= 18) {
+    solar = 900.0 * sin((hour - 6) / 12.0 * M_PI);
+    if (solar < 0) solar = 0;
+  }
+
+  // Read sensors or simulate
+  float temperature = readTemperature();
+  float ph = readPH();
+  float turbidity = readTurbidity(antecedentRain24h);
+  float dissolvedO2 = readDO(antecedentRain24h);
+  float salinity = readSalinity(tide, antecedentRain24h);
+
+  // Build CSV line
+  String ts = getISOTime();
+  String csvLine = "";
+  csvLine += ts + ",";
+  csvLine += String(currentSeason->name) + ",";
+  csvLine += String(temperature, 2) + ",";
+  csvLine += String(ph, 2) + ",";
+  csvLine += String(turbidity, 2) + ",";
+  csvLine += String(dissolvedO2, 2) + ",";
+  csvLine += String(salinity, 2) + ",";
+  csvLine += String((int)solar) + ",";
+  csvLine += String(tide, 2) + ",";
+  csvLine += String(antecedentRain24h, 2);
+
+  Serial.println("Recorded: " + csvLine);
+
+  // Append CSV
+  if (!appendCSVLine(csvLine)) {
+    Serial.println("Failed to append CSV");
+  }
+
+  // Build JSON
+  String json = "{";
+  json += "\"timestamp\":\"" + ts + "\",";
+  json += "\"season\":\"" + String(currentSeason->name) + "\",";
+  json += "\"temperature_C\":" + String(temperature, 2) + ",";
+  json += "\"pH\":" + String(ph, 2) + ",";
+  json += "\"turbidity_NTU\":" + String(turbidity, 2) + ",";
+  json += "\"dissolved_oxygen_mgL\":" + String(dissolvedO2, 2) + ",";
+  json += "\"salinity_PSU\":" + String(salinity, 2) + ",";
+  json += "\"solar_Wm2\":" + String((int)solar) + ",";
+  json += "\"tide_m\":" + String(tide, 2) + ",";
+  json += "\"antecedentRain_24h_mm\":" + String(antecedentRain24h, 2);
+  json += "}";
+
+  // Try send HTTP
+  if (WiFi.status() == WL_CONNECTED) {
+    bool ok = postJSON(json);
+    if(!ok) {
+      Serial.println("POST failed or non-2xx");
+    }
+  } else {
+    Serial.println("WiFi disconnected; stored locally.");
+  }
+}
+
+// ---------------- Additional helper functions ----------------
+
+// A simple antecedent rain helper which returns a simulated 24h precipitation
+float computeAntecedRainHelperSim() {
+  // We provide correlated random rainfall per hour; for simplicity produce 0-20 mm
+  // You can replace with a rolling accumulation from actual rain gauge or API.
+  float r = random(0, 1000) / 100.0; // 0-10 mm random spot
+  // Make occasional heavy events
+  if (random(0,100) < 5) r += random(0,500)/10.0; // occasional heavy
+  // Smooth value (simple)
+  static float last = 0;
+  float val = (last*0.7 + r*0.3);
+  last = val;
+  return val;
+}
+
+
+
+v2 
+
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <SPIFFS.h>
+#include <HardwareSerial.h>
+
+// === WiFi Config ===
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASS";
+
+// === Server Config ===
+String serverUrl = "http://your-server.com/upload";
+
+// === GSM (SIM800L) Config ===
+HardwareSerial sim800(1);
+#define SIM800_TX 17
+#define SIM800_RX 16
+String phoneNumber = "+639XXXXXXXXX"; // recipient number
+
+// === Sensor thresholds ===
+#define DO_THRESHOLD 4.0
+#define TURB_THRESHOLD 50.0
+
+// === Simulation Flags ===
+bool useSimulation = true;
+
+// === Data Struct ===
+struct WaterQualityData {
+  float dissolvedOxygen;
+  float turbidity;
+  float temperature;
+  float salinity;
+  float pH;
+  float rain24h;
+};
+
+// === Functions ===
+void initWiFi() {
+  WiFi.begin(ssid, password);
+  Serial.print("Connecting to WiFi");
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println(" Connected!");
+}
+
+void initGSM() {
+  sim800.begin(9600, SERIAL_8N1, SIM800_RX, SIM800_TX);
+  delay(1000);
+  sendCommand("AT");
+  sendCommand("AT+CMGF=1");
+  sendCommand("AT+CSCS=\"GSM\"");
+}
+
+void sendCommand(String cmd) {
+  sim800.println(cmd);
+  delay(500);
+  while (sim800.available()) {
+    Serial.write(sim800.read());
+  }
+}
+
+void sendSMS(String number, String message) {
+  sim800.println("AT+CMGS=\"" + number + "\"");
+  delay(500);
+  sim800.print(message);
+  delay(500);
+  sim800.write(26); // CTRL+Z
+  delay(3000);
+  Serial.println("SMS Sent: " + message);
+}
+
+// === Sensor Simulations ===
+float computeAntecedRainHelperSim() {
+  float r = random(0, 1000) / 100.0;
+  if (random(0,100) < 5) r += random(0,500)/10.0;
+  static float last = 0;
+  float val = (last*0.7 + r*0.3);
+  last = val;
+  return val;
+}
+
+WaterQualityData readSensors() {
+  WaterQualityData data;
+
+  if (useSimulation) {
+    data.dissolvedOxygen = random(30, 70) / 10.0; // 3.0–7.0 mg/L
+    data.turbidity = random(10, 100);
+    data.temperature = random(200, 320) / 10.0; // 20.0–32.0 °C
+    data.salinity = random(25, 35);
+    data.pH = random(70, 85) / 10.0;
+    data.rain24h = computeAntecedRainHelperSim();
+  } else {
+    // TODO: replace with real sensor reads
+    data.dissolvedOxygen = 6.0;
+    data.turbidity = 20.0;
+    data.temperature = 28.0;
+    data.salinity = 30.0;
+    data.pH = 7.8;
+    data.rain24h = 0.0;
+  }
+
+  return data;
+}
+
+void logToSPIFFS(WaterQualityData data) {
+  File file = SPIFFS.open("/log.csv", FILE_APPEND);
+  if (!file) {
+    Serial.println("Failed to open log file");
+    return;
+  }
+  file.printf("%.2f,%.2f,%.2f,%.2f,%.2f,%.2f\n",
+              data.dissolvedOxygen,
+              data.turbidity,
+              data.temperature,
+              data.salinity,
+              data.pH,
+              data.rain24h);
+  file.close();
+  Serial.println("Logged data to SPIFFS");
+}
+
+void postToServer(WaterQualityData data) {
+  if (WiFi.status() == WL_CONNECTED) {
+    HTTPClient http;
+    http.begin(serverUrl);
+    http.addHeader("Content-Type", "application/json");
+
+    String json = "{";
+    json += "\"do\":" + String(data.dissolvedOxygen) + ",";
+    json += "\"turbidity\":" + String(data.turbidity) + ",";
+    json += "\"temperature\":" + String(data.temperature) + ",";
+    json += "\"salinity\":" + String(data.salinity) + ",";
+    json += "\"pH\":" + String(data.pH) + ",";
+    json += "\"rain24h\":" + String(data.rain24h);
+    json += "}";
+
+    int httpResponseCode = http.POST(json);
+    Serial.print("HTTP Response: ");
+    Serial.println(httpResponseCode);
+    http.end();
+  }
+}
+
+// === Setup & Loop ===
+void setup() {
+  Serial.begin(115200);
+  if(!SPIFFS.begin(true)){
+    Serial.println("SPIFFS Mount Failed");
+    return;
+  }
+
+  initWiFi();
+  initGSM();
+}
+
+void loop() {
+  WaterQualityData data = readSensors();
+
+  Serial.printf("DO=%.2f mg/L | Turb=%.2f NTU | Temp=%.2f C | Sal=%.2f ppt | pH=%.2f | Rain=%.2f mm\n",
+                data.dissolvedOxygen, data.turbidity, data.temperature,
+                data.salinity, data.pH, data.rain24h);
+
+  // Log & Send
+  logToSPIFFS(data);
+  postToServer(data);
+
+  // SMS Alerts
+  if (data.dissolvedOxygen < DO_THRESHOLD || data.turbidity > TURB_THRESHOLD) {
+    String msg = "ALERT! DO=" + String(data.dissolvedOxygen) +
+                 " mg/L, Turb=" + String(data.turbidity) + " NTU.";
+    sendSMS(phoneNumber, msg);
+  }
+
+  delay(15000); // every 15 sec for demo
+}

@@ -1,0 +1,10 @@
+fastapi
+uvicorn
+pandas
+scikit-learn
+joblib
+requests
+firebase-admin
+python-dotenv
+
+# smart_oyster_ml/oyster_water_quality_2025.pkl
