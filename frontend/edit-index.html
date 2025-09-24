@@ -1,1 +1,394 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Oyster Monitoring System</title>
 
+  <!-- TailwindCSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Firebase -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
+
+  <!-- Chart.js for line charts -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <style>
+    body {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+      color: white;
+      font-family: 'Inter', sans-serif;
+    }
+
+    /* Glass card */
+    .glass-card {
+      background: rgba(30, 41, 59, 0.85);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 1rem;
+      box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+    }
+
+    /* Hide sections dynamically */
+    .hidden-section {
+      display: none;
+    }
+
+    #dataTable td, #dataTable th {
+      text-align: center;
+    }
+
+    canvas {
+      width: 100% !important;
+      height: auto !important;
+      max-height: 400px;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex">
+
+  <!-- Sidebar -->
+ <aside class="w-64 bg-gray-900 p-4 flex flex-col h-screen">
+  <!-- Logo and Title -->
+        <div>
+            <h1 class="text-2xl font-extrabold bg-gradient-to-r from-purple-400 via-pink-400 to-red-400 bg-clip-text text-transparent">
+            Oyster AI
+            </h1>
+        </div>
+
+        <!-- Navigation Menu -->
+        <nav class="mt-6 space-y-2 flex-1">
+            <button onclick="showSection('dashboard')" 
+                    class="w-full text-left px-4 py-2 rounded-lg hover:bg-gray-700 transition">
+            📊 Dashboard
+            </button>
+            <button onclick="showSection('statistics')" 
+                    class="w-full text-left px-4 py-2 rounded-lg hover:bg-gray-700 transition">
+            📈 Statistics
+            </button>
+            <button onclick="showSection('Instruction')" 
+                    class="w-full text-left px-4 py-2 rounded-lg hover:bg-gray-700 transition">
+            📖 Instructions
+            </button>
+
+        </nav>
+
+        <!-- Sidebar Footer -->
+        <footer class="mt-auto pt-4 border-t border-gray-700 text-center text-gray-400 text-xs">
+            <p>© 2025 Oyster AI</p>
+            <p class="mt-1">Developed by <span class="text-green-400">Team AquaTech</span></p>
+            <p class="mt-2 text-[10px]">v1.0.0</p>
+        </footer>
+        </aside>
+        
+  <main class="flex-1 p-4 sm:p-6 overflow-hidden">
+
+    <!-- Dashboard Section -->
+    <section id="dashboard-section">
+      <h2 class="text-xl font-bold mb-4">Dashboard</h2>
+      <div class="glass-card p-6 mb-8">
+        <canvas id="lineChart"></canvas>
+      </div>
+
+      <!-- Live Sensor Cards -->
+      <div id="live-cards" class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4"></div>
+      <p id="last-updated" class="text-center text-sm text-gray-400 mt-4">⏱ Last updated: --</p>
+    </section>
+
+    <!-- Statistics Section -->
+    <section id="statistics-section" class="hidden-section">
+      <h2 class="text-xl font-bold mb-4">Statistics</h2>
+      <div class="glass-card p-4 sm:p-6">
+        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 gap-3">
+          <h2 class="text-base sm:text-lg font-semibold text-gray-300">📋 Sensor Readings</h2>
+          <div class="flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4">
+            <select id="filterSelect" class="bg-gray-800 border border-gray-700 text-white px-2 sm:px-3 py-2 rounded-lg text-sm sm:text-base">
+              <option value="24h">Last 24h</option>
+              <option value="7d">Last 7 Days</option>
+              <option value="all" selected>All Records</option>
+            </select>
+            <button onclick="downloadCSV()" class="bg-green-500 hover:bg-green-600 text-white px-3 sm:px-4 py-2 rounded-lg shadow text-sm sm:text-base">
+              ⬇️ Export CSV
+            </button>
+          </div>
+        </div>
+
+        <div class="overflow-x-auto overflow-y-auto h-[calc(100vh-200px)] cursor-pointer">
+          <table class="min-w-full text-xs sm:text-sm border border-gray-700 text-gray-200">
+            <thead class="bg-blue-900 sticky top-0">
+              <tr>
+                <th class="px-2 py-2 border">Timestamp</th>
+                <th class="px-2 py-2 border">Temp (°C)</th>
+                <th class="px-2 py-2 border">Temp Level</th>
+                <th class="px-2 py-2 border">TDS</th>
+                <th class="px-2 py-2 border">TDS Level</th>
+                <th class="px-2 py-2 border">Turbidity (NTU)</th>
+                <th class="px-2 py-2 border">Turbidity Level</th>
+                <th class="px-2 py-2 border">Salinity</th>
+                <th class="px-2 py-2 border">Salinity Level</th>
+                <th class="px-2 py-2 border">pH</th>
+                <th class="px-2 py-2 border">pH Level</th>
+              </tr>
+            </thead>
+            <tbody id="dataTable"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+     <!-- Instructions Section -->
+    <section id="Instruction-section" class="hidden-section">
+    <h2 class="text-xl font-bold text-white mb-4">📖 Instructions</h2>
+    <div class="space-y-4 text-gray-300">
+      <div class="bg-gray-700 p-4 rounded-lg shadow">
+        <h3 class="font-semibold mb-2">1. Overview</h3>
+        <p>
+          Oyster AI monitors water quality for oyster farming, tracking pH, TDS, Turbidity, Temperature, and Salinity.
+          The system uses real-time sensor data to predict optimal water conditions.
+        </p>
+      </div>
+
+      <div class="bg-gray-700 p-4 rounded-lg shadow">
+        <h3 class="font-semibold mb-2">2. Hardware Setup</h3>
+        <ul class="list-disc list-inside">
+          <li>Connect sensors (pH, TDS, Turbidity, Temperature, Salinity) to the ESP32.</li>
+          <li>Ensure proper wiring and stable 5V power supply.</li>
+          <li>Place sensors properly in the water tank for accurate readings.</li>
+        </ul>
+      </div>
+
+      <div class="bg-gray-700 p-4 rounded-lg shadow">
+        <h3 class="font-semibold mb-2">3. Software Setup</h3>
+        <ol class="list-decimal list-inside">
+          <li>Flash ESP32 with the Arduino sketch provided.</li>
+          <li>Update Wi-Fi credentials inside the Arduino code.</li>
+          <li>Connect to Firebase by adding your database URL and API key.</li>
+        </ol>
+      </div> 
+    </section>
+  
+  </main>
+
+  <!-- Firebase + Logic -->
+  <script>
+    /* ========= Sidebar Navigation ========= */
+    function showSection(section) {
+      document.getElementById("dashboard-section").classList.add("hidden-section");
+      document.getElementById("statistics-section").classList.add("hidden-section");
+      document.getElementById("Instruction-section").classList.add("hidden-section");
+      document.getElementById(section + "-section").classList.remove("hidden-section");
+    }
+
+    /* ========= Firebase Configuration ========= */
+    const firebaseConfig = {
+      apiKey: "AIzaSyCjTkCAgC8l9PUiFIeWXpy2S2nH7foJHX8",
+      authDomain: "trial-reading.firebaseapp.com",
+      databaseURL: "https://trial-reading-default-rtdb.europe-west1.firebasedatabase.app",
+      projectId: "trial-reading",
+      storageBucket: "trial-reading.firebasestorage.app",
+      messagingSenderId: "541548808372",
+      appId: "1:541548808372:web:773b8f8cac50b0e4c2afe1"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+    const dbRef = db.ref("trial1_Reading");
+
+    /* ========= Chart.js Setup ========= */
+    const ctx = document.getElementById('lineChart').getContext('2d');
+    const lineChart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [
+          { label: "🌡 Temperature (°C)", data: [], borderColor: "#f87171", tension: 0.4 },
+          { label: "💧 TDS (PPM)", data: [], borderColor: "#34d399", tension: 0.4 },
+          { label: "🌊 Turbidity (NTU)", data: [], borderColor: "#fbbf24", tension: 0.4 },
+          { label: "🧂 Salinity (PPT)", data: [], borderColor: "#60a5fa", tension: 0.4 },
+          { label: "⚗️ pH", data: [], borderColor: "#a78bfa", tension: 0.4 }
+        ]
+      },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: {
+            labels: { color: "#fff" }
+          },
+          tooltip: {
+            mode: 'nearest',
+            intersect: false,
+            backgroundColor: '#1e293b',
+            titleColor: '#fff',
+            bodyColor: '#fff'
+          }
+        },
+        scales: {
+          x: {
+            ticks: { color: "#9ca3af", autoSkip: true, maxTicksLimit: 10 },
+            grid: { color: "rgba(255,255,255,0.1)" }
+          },
+          y: {
+            ticks: { color: "#9ca3af" },
+            grid: { color: "rgba(255,255,255,0.1)" }
+            // min: 0,
+            // max: 1500
+          }
+        }
+      }
+    });
+
+    /* ========= Render Dashboard Cards ========= */
+    function renderCards(latest) {
+      const container = document.getElementById("live-cards");
+      container.innerHTML = "";
+
+      const cards = [
+        { label: "🌡 Temperature", value: latest.temperature, level: latest.temperature_level },
+        { label: "💧 TDS", value: latest.tds, level: latest.tds_level },
+        { label: "🌊 Turbidity", value: latest.turbidity_ntu ?? latest.turbidity_voltage ?? latest.turbidity_raw, level: latest.turbidity_level },
+        { label: "🧂 Salinity", value: latest.salinity, level: latest.salinity_level },
+        { label: "⚗️ pH", value: latest.ph, level: latest.ph_level }
+      ];
+
+      cards.forEach(card => {
+        const div = document.createElement("div");
+        div.className = "glass-card p-4 text-center";
+        div.innerHTML = `
+          <p class="text-sm text-gray-400 mb-2">${card.label}</p>
+          <p class="text-2xl font-extrabold text-green-400">${card.value ?? "--"}</p>
+          <p class="text-sm text-yellow-400 mt-1">${card.level ?? "--"}</p>
+        `;
+        container.appendChild(div);
+      });
+    }
+
+    /* ========= Firebase Realtime Listener ========= */
+    dbRef.orderByChild("timestamp").limitToLast(20).on("child_added", snapshot => {
+      const d = snapshot.val();
+      if (!d) return;
+
+      // Add data to chart
+      lineChart.data.labels.push(d.timestamp);
+      lineChart.data.datasets[0].data.push(d.temperature ?? 0);
+      lineChart.data.datasets[1].data.push(d.tds ?? 0);
+      lineChart.data.datasets[2].data.push(d.turbidity_ntu ?? 0);
+      lineChart.data.datasets[3].data.push(d.salinity ?? 0);
+      lineChart.data.datasets[4].data.push(d.ph ?? 0);
+
+      if (lineChart.data.labels.length > 20) {
+        lineChart.data.labels.shift();
+        lineChart.data.datasets.forEach(ds => ds.data.shift());
+      }
+      lineChart.update();
+
+      renderCards(d);
+
+      // Format last updated timestamp
+      const date = new Date(d.timestamp);
+      const formatted = date.toLocaleString();
+      document.getElementById("last-updated").textContent = `⏱ Last updated: ${formatted}`;
+    });
+
+    /* ========= Statistics Table Logic ========= */
+    let allData = [];
+    const ROW_LIMIT = 20;
+
+    dbRef.on("value", snapshot => {
+      const data = [];
+      snapshot.forEach(child => {
+        const val = child.val();
+        if (!val.timestamp) return;
+        val._date = new Date(val.timestamp);
+
+        // Auto compute NTU if only voltage present
+        if (val.turbidity_voltage && !val.turbidity_ntu) {
+          val.turbidity_ntu = Math.round(300 * (3.3 - val.turbidity_voltage));
+        }
+        data.push(val);
+      });
+      allData = data.sort((a, b) => a._date - b._date);
+      applyFilter();
+    });
+
+    function applyFilter() {
+      const filter = document.getElementById("filterSelect").value;
+      const now = new Date();
+      let filtered = [...allData];
+
+      if (filter === "24h") {
+        filtered = filtered.filter(d => now - d._date <= 24 * 60 * 60 * 1000);
+      } else if (filter === "7d") {
+        filtered = filtered.filter(d => now - d._date <= 7 * 24 * 60 * 60 * 1000);
+      }
+
+      renderTable(filtered.reverse());
+    }
+
+    document.getElementById("filterSelect").addEventListener("change", applyFilter);
+
+    function renderTable(data) {
+      const tbody = document.getElementById("dataTable");
+      tbody.innerHTML = "";
+
+      if (!data.length) {
+        tbody.innerHTML = `<tr><td colspan="11" class="py-4 text-gray-500">No data found</td></tr>`;
+        return;
+      }
+
+      const limited = data.slice(0, ROW_LIMIT);
+      let rows = "";
+
+      limited.forEach(d => {
+        rows += `
+          <tr class="hover:bg-gray-900 transition">
+            <td class="border px-2 py-1">${new Date(d.timestamp).toLocaleString()}</td>
+            <td class="border px-2 py-1">${d.temperature ?? "--"}</td>
+            <td class="border px-2 py-1">${d.temperature_level ?? "--"}</td>
+            <td class="border px-2 py-1">${d.tds ?? "--"}</td>
+            <td class="border px-2 py-1">${d.tds_level ?? "--"}</td>
+            <td class="border px-2 py-1">${d.turbidity_ntu ?? "--"}</td>
+            <td class="border px-2 py-1">${d.turbidity_level ?? "--"}</td>
+            <td class="border px-2 py-1">${d.salinity ?? "--"}</td>
+            <td class="border px-2 py-1">${d.salinity_level ?? "--"}</td>
+            <td class="border px-2 py-1">${d.ph ?? "--"}</td>
+            <td class="border px-2 py-1">${d.ph_level ?? "--"}</td>
+          </tr>
+        `;
+      });
+
+      tbody.innerHTML = rows;
+
+      if (data.length > ROW_LIMIT) {
+        tbody.innerHTML += `
+          <tr>
+            <td colspan="11" class="text-center py-2 text-gray-400">
+              Showing latest ${ROW_LIMIT} of ${data.length} records
+            </td>
+          </tr>
+        `;
+      }
+    }
+
+    /* ========= CSV Export ========= */
+    function downloadCSV() {
+      const rows = [["Timestamp","Temp","Temp_level","TDS","TDS_level","Turbidity","Turbidity_level","Salinity","Salinity_level","pH","pH_level"]];
+      allData.forEach(d => {
+        rows.push([
+          new Date(d.timestamp).toLocaleString(), d.temperature, d.temperature_level,
+          d.tds, d.tds_level,
+          d.turbidity_ntu, d.turbidity_level,
+          d.salinity, d.salinity_level,
+          d.ph, d.ph_level
+        ]);
+      });
+      const csv = rows.map(r => r.join(",")).join("\n");
+      const blob = new Blob([csv], { type: "text/csv" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "sensor_readings.csv";
+      link.click();
+    }
+  </script>
+</body>
+</html>
